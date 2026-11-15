@@ -1,0 +1,258 @@
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+  <!-- Emerald Brand Gem Crest -->
+  <symbol id="icon-emerald-crest" viewBox="0 0 32 32">
+    <polygon points="16,2 27,8 27,24 16,30 5,24 5,8" fill="#154c3e" stroke="#202830" stroke-width="2" />
+    <polygon points="16,4 25,9 25,23 16,28 7,23 7,9" fill="#2d9575" />
+    <polygon points="16,7 22,11 22,21 16,25 10,21 10,11" fill="#4cd9a8" />
+    <polygon points="16,7 22,11 16,16 10,11" fill="#84f0c4" />
+    <polygon points="16,16 22,21 16,25 10,21" fill="#1f6f5b" />
+    <rect x="13" y="12" width="3" height="3" fill="#f8f4dc" />
+    <rect x="14" y="2" width="4" height="2" fill="#f4c430" />
+    <rect x="14" y="28" width="4" height="2" fill="#f4c430" />
+  </symbol>
+
+  <!-- Poké Balls -->
+  <symbol id="icon-pokeball" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="10" fill="#202830" />
+    <path d="M4 12 A8 8 0 0 1 20 12 Z" fill="#e63946" />
+    <path d="M6 10 A6 6 0 0 1 14 6" fill="none" stroke="#ff8fa3" stroke-width="2" stroke-linecap="round" />
+    <path d="M4 12 A8 8 0 0 0 20 12 Z" fill="#f8f4dc" />
+    <rect x="3" y="11" width="18" height="2" fill="#202830" />
+    <circle cx="12" cy="12" r="4" fill="#202830" />
+    <circle cx="12" cy="12" r="2.2" fill="#f8f4dc" />
+  </symbol>
+
+  <symbol id="icon-greatball" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="10" fill="#202830" />
+    <path d="M4 12 A8 8 0 0 1 20 12 Z" fill="#2a6fdb" />
+    <polygon points="5,8 9,10 8,12 4,10" fill="#e63946" />
+    <polygon points="19,8 15,10 16,12 20,10" fill="#e63946" />
+    <path d="M4 12 A8 8 0 0 0 20 12 Z" fill="#f8f4dc" />
+    <rect x="3" y="11" width="18" height="2" fill="#202830" />
+    <circle cx="12" cy="12" r="4" fill="#202830" />
+    <circle cx="12" cy="12" r="2.2" fill="#f8f4dc" />
+  </symbol>
+
+  <symbol id="icon-ultraball" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="10" fill="#202830" />
+    <path d="M4 12 A8 8 0 0 1 20 12 Z" fill="#32374a" />
+    <rect x="6" y="5" width="3" height="6" fill="#f4c430" />
+    <rect x="15" y="5" width="3" height="6" fill="#f4c430" />
+    <rect x="8" y="5" width="8" height="2.2" fill="#f4c430" />
+    <path d="M4 12 A8 8 0 0 0 20 12 Z" fill="#f8f4dc" />
+    <rect x="3" y="11" width="18" height="2" fill="#202830" />
+    <circle cx="12" cy="12" r="4" fill="#202830" />
+    <circle cx="12" cy="12" r="2.2" fill="#f8f4dc" />
+  </symbol>
+
+  <symbol id="icon-masterball" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="10" fill="#202830" />
+    <path d="M4 12 A8 8 0 0 1 20 12 Z" fill="#6f42c1" />
+    <circle cx="7" cy="8" r="2" fill="#f06595" />
+    <circle cx="17" cy="8" r="2" fill="#f06595" />
+    <path d="M9 9 L10.5 6 L12 8 L13.5 6 L15 9" fill="none" stroke="#f8f4dc" stroke-width="1.5" stroke-linejoin="round" />
+    <path d="M4 12 A8 8 0 0 0 20 12 Z" fill="#f8f4dc" />
+    <rect x="3" y="11" width="18" height="2" fill="#202830" />
+    <circle cx="12" cy="12" r="4" fill="#202830" />
+    <circle cx="12" cy="12" r="2.2" fill="#f8f4dc" />
+  </symbol>
+
+  <!-- Hoenn 8 Gym Badges -->
+  <!-- 1. Stone Badge -->
+  <symbol id="icon-badge-stone" viewBox="0 0 24 24">
+    <polygon points="12,2 20,7 19,17 12,22 5,17 4,7" fill="#9c8a72" stroke="#202830" stroke-width="1.8" />
+    <polygon points="12,5 17,8 16,15 12,19 8,15 7,8" fill="#d8c3a5" />
+    <polygon points="12,8 15,10 14,14 12,16 10,14 9,10" fill="#e6b85c" />
+  </symbol>
+
+  <!-- 2. Knuckle Badge -->
+  <symbol id="icon-badge-knuckle" viewBox="0 0 24 24">
+    <polygon points="12,2 21,9 18,21 6,21 3,9" fill="#c94c38" stroke="#202830" stroke-width="1.8" />
+    <polygon points="12,5 18,10 16,18 8,18 6,10" fill="#f4b942" />
+    <rect x="9" y="9" width="6" height="6" fill="#e63946" stroke="#202830" stroke-width="1.2" />
+    <rect x="11" y="10" width="2" height="4" fill="#f8f4dc" />
+  </symbol>
+
+  <!-- 3. Dynamo Badge -->
+  <symbol id="icon-badge-dynamo" viewBox="0 0 24 24">
+    <polygon points="14,2 20,8 15,12 20,16 10,22 4,16 9,12 4,8" fill="#f4c430" stroke="#202830" stroke-width="1.8" />
+    <polygon points="13,5 17,8 12,12 16,16 11,19 7,16 11,12 7,8" fill="#fff3a1" />
+  </symbol>
+
+  <!-- 4. Heat Badge -->
+  <symbol id="icon-badge-heat" viewBox="0 0 24 24">
+    <path d="M12 2 C15 6 19 8 19 14 C19 19 15.8 22 12 22 C8.2 22 5 19 5 14 C5 9 8 7 9 4 C10 6 11 5 12 2 Z" fill="#e63946" stroke="#202830" stroke-width="1.8" />
+    <path d="M12 8 C14 10 16 12 16 15 C16 18 14.2 19.5 12 19.5 C9.8 19.5 8 18 8 15 C8 12 10 10 12 8 Z" fill="#ff9f1c" />
+    <circle cx="12" cy="15.5" r="2" fill="#fff3a1" />
+  </symbol>
+
+  <!-- 5. Balance Badge -->
+  <symbol id="icon-badge-balance" viewBox="0 0 24 24">
+    <polygon points="12,2 16,8 22,12 16,16 12,22 8,16 2,12 8,8" fill="#d8e2dc" stroke="#202830" stroke-width="1.8" />
+    <polygon points="12,5 14.8,9.2 19,12 14.8,14.8 12,19 9.2,14.8 5,12 9.2,9.2" fill="#4cd9a8" />
+    <circle cx="12" cy="12" r="2.3" fill="#f8f4dc" stroke="#202830" stroke-width="1" />
+  </symbol>
+
+  <!-- 6. Feather Badge -->
+  <symbol id="icon-badge-feather" viewBox="0 0 24 24">
+    <path d="M19 3 C12 4 6 9 4 17 L8 21 C15 19 20 13 21 5 Z" fill="#3a86ff" stroke="#202830" stroke-width="1.8" />
+    <path d="M17 6 C12 7 8 11 7 16 L9 18 C14 16 17 12 18 7 Z" fill="#8ecae6" />
+    <line x1="6" y1="19" x2="17" y2="7" stroke="#f8f4dc" stroke-width="1.6" />
+  </symbol>
+
+  <!-- 7. Mind Badge -->
+  <symbol id="icon-badge-mind" viewBox="0 0 24 24">
+    <path d="M11 3 A9 9 0 1 0 11 21 A6.5 6.5 0 1 1 11 3 Z" fill="#e63946" stroke="#202830" stroke-width="1.6" />
+    <circle cx="15" cy="12" r="5" fill="#f4c430" stroke="#202830" stroke-width="1.6" />
+    <circle cx="15" cy="12" r="2.2" fill="#fff3a1" />
+  </symbol>
+
+  <!-- 8. Rain Badge -->
+  <symbol id="icon-badge-rain" viewBox="0 0 24 24">
+    <path d="M12 2 C16 8 19 11.5 19 15.5 A7 7 0 0 1 5 15.5 C5 11.5 8 8 12 2 Z" fill="#2ec4b6" stroke="#202830" stroke-width="1.8" />
+    <path d="M12 6 C14.5 10 16 12.2 16 15 A4 4 0 0 1 8 15 C8 12.2 9.5 10 12 6 Z" fill="#90e0ef" />
+    <circle cx="10.5" cy="14" r="1.4" fill="#f8f4dc" />
+  </symbol>
+
+  <!-- Soul-Link Chain & Broken Chain -->
+  <symbol id="icon-link-chain" viewBox="0 0 24 24">
+    <rect x="3" y="8" width="10" height="8" rx="3" fill="none" stroke="#202830" stroke-width="4" />
+    <rect x="3" y="8" width="10" height="8" rx="3" fill="none" stroke="#4cd9a8" stroke-width="2" />
+    <rect x="11" y="8" width="10" height="8" rx="3" fill="none" stroke="#202830" stroke-width="4" />
+    <rect x="11" y="8" width="10" height="8" rx="3" fill="none" stroke="#f4c430" stroke-width="2" />
+    <rect x="8" y="10.5" width="8" height="3" fill="#f8f4dc" stroke="#202830" stroke-width="1.2" />
+  </symbol>
+
+  <symbol id="icon-link-broken" viewBox="0 0 24 24">
+    <path d="M9 8 H5 A3 3 0 0 0 5 16 H9" fill="none" stroke="#202830" stroke-width="4" stroke-linecap="square" />
+    <path d="M9 8 H5 A3 3 0 0 0 5 16 H9" fill="none" stroke="#8d99ae" stroke-width="2" stroke-linecap="square" />
+    <path d="M15 8 H19 A3 3 0 0 1 19 16 H15" fill="none" stroke="#202830" stroke-width="4" stroke-linecap="square" />
+    <path d="M15 8 H19 A3 3 0 0 1 19 16 H15" fill="none" stroke="#e63946" stroke-width="2" stroke-linecap="square" />
+    <path d="M11 4 L13 8 L10 12 L14 16 L11 20" fill="none" stroke="#ff595e" stroke-width="2" stroke-linecap="round" />
+  </symbol>
+
+  <!-- Graveyard Tombstone -->
+  <symbol id="icon-tombstone" viewBox="0 0 24 24">
+    <path d="M6 20 V10 A6 6 0 0 1 18 10 V20 Z" fill="#8b96a3" stroke="#202830" stroke-width="2" />
+    <path d="M8 19 V10 A4 4 0 0 1 16 10 V19 Z" fill="#b4bec9" />
+    <rect x="4" y="19" width="16" height="3" fill="#525b66" stroke="#202830" stroke-width="1.5" />
+    <rect x="11" y="7" width="2" height="7" fill="#414852" />
+    <rect x="9" y="9" width="6" height="2" fill="#414852" />
+    <rect x="3" y="21" width="4" height="2" fill="#2d9575" />
+    <rect x="17" y="21" width="4" height="2" fill="#2d9575" />
+  </symbol>
+
+  <!-- Host Crown -->
+  <symbol id="icon-host-crown" viewBox="0 0 24 24">
+    <polygon points="3,18 3,7 8,12 12,5 16,12 21,7 21,18" fill="#f4c430" stroke="#202830" stroke-width="2" stroke-linejoin="round" />
+    <rect x="4" y="16" width="16" height="3" fill="#d99b18" stroke="#202830" stroke-width="1.5" />
+    <rect x="10.5" y="10.5" width="3" height="3" fill="#2d9575" />
+    <circle cx="3.5" cy="6.5" r="1.5" fill="#fff3a1" stroke="#202830" stroke-width="1" />
+    <circle cx="12" cy="4.5" r="1.5" fill="#fff3a1" stroke="#202830" stroke-width="1" />
+    <circle cx="20.5" cy="6.5" r="1.5" fill="#fff3a1" stroke="#202830" stroke-width="1" />
+  </symbol>
+
+  <!-- Co-op Party Shield -->
+  <symbol id="icon-coop-shield" viewBox="0 0 24 24">
+    <path d="M12 2 L20 5 V12 C20 17 16 20.5 12 22 C8 20.5 4 17 4 12 V5 Z" fill="#f4c430" stroke="#202830" stroke-width="2" />
+    <path d="M12 4.5 V19.5 C9 18.2 6.5 15.5 6.5 12 V6.5 Z" fill="#2d9575" />
+    <path d="M12 4.5 V19.5 C15 18.2 17.5 15.5 17.5 12 V6.5 Z" fill="#3a86ff" />
+    <rect x="11" y="7" width="2" height="9" fill="#f8f4dc" />
+    <rect x="8.5" y="10" width="7" height="2" fill="#f8f4dc" />
+  </symbol>
+
+  <!-- Trade Arrows -->
+  <symbol id="icon-trade-arrows" viewBox="0 0 24 24">
+    <polygon points="3,8 15,8 15,5 21,9.5 15,14 15,11 3,11" fill="#4cd9a8" stroke="#202830" stroke-width="1.6" stroke-linejoin="round" />
+    <polygon points="21,13 9,13 9,10 3,14.5 9,19 9,16 21,16" fill="#f4c430" stroke="#202830" stroke-width="1.6" stroke-linejoin="round" />
+  </symbol>
+
+  <!-- Speed Chevrons 1x / 2x / 3x -->
+  <symbol id="icon-speed-1x" viewBox="0 0 24 24">
+    <polygon points="7,5 18,12 7,19" fill="#4cd9a8" stroke="#202830" stroke-width="2" stroke-linejoin="round" />
+  </symbol>
+
+  <symbol id="icon-speed-2x" viewBox="0 0 24 24">
+    <polygon points="3,5 12,12 3,19" fill="#4cd9a8" stroke="#202830" stroke-width="1.8" stroke-linejoin="round" />
+    <polygon points="12,5 21,12 12,19" fill="#84f0c4" stroke="#202830" stroke-width="1.8" stroke-linejoin="round" />
+  </symbol>
+
+  <symbol id="icon-speed-3x" viewBox="0 0 24 24">
+    <polygon points="2,5 9.5,12 2,19" fill="#4cd9a8" stroke="#202830" stroke-width="1.6" stroke-linejoin="round" />
+    <polygon points="8.5,5 16,12 8.5,19" fill="#f4c430" stroke="#202830" stroke-width="1.6" stroke-linejoin="round" />
+    <polygon points="15,5 22.5,12 15,19" fill="#ff9f1c" stroke="#202830" stroke-width="1.6" stroke-linejoin="round" />
+  </symbol>
+
+  <!-- Teleport Warp Pad -->
+  <symbol id="icon-warp-pad" viewBox="0 0 24 24">
+    <ellipse cx="12" cy="18" rx="9" ry="4" fill="#1f6f5b" stroke="#202830" stroke-width="1.8" />
+    <ellipse cx="12" cy="17.5" rx="6" ry="2.4" fill="#4cd9a8" />
+    <polygon points="12,3 17,9 14,9 14,15 10,15 10,9 7,9" fill="#90e0ef" stroke="#202830" stroke-width="1.5" stroke-linejoin="round" />
+  </symbol>
+
+  <!-- Friendly PvP Swords -->
+  <symbol id="icon-pvp-swords" viewBox="0 0 24 24">
+    <polygon points="4,4 7,4 16,13 18,11 20,13 17,16 20,19 18,21 15,18 12,21 10,19 12,17 4,7" fill="#d8e2dc" stroke="#202830" stroke-width="1.5" stroke-linejoin="round" />
+    <polygon points="20,4 17,4 8,13 6,11 4,13 7,16 4,19 6,21 9,18 12,21 14,19 12,17 20,7" fill="#f4c430" stroke="#202830" stroke-width="1.5" stroke-linejoin="round" />
+  </symbol>
+
+  <!-- Emerald GBA Cartridge (Run Saves) -->
+  <symbol id="icon-save-cart" viewBox="0 0 24 24">
+    <path d="M4 4 H20 V20 H4 Z" fill="#2d9575" stroke="#202830" stroke-width="2" />
+    <rect x="6" y="3" width="12" height="3" fill="#4cd9a8" stroke="#202830" stroke-width="1.4" />
+    <rect x="6" y="8" width="12" height="9" fill="#f8f4dc" stroke="#202830" stroke-width="1.4" />
+    <rect x="8" y="10" width="8" height="2" fill="#e63946" />
+    <rect x="8" y="13" width="6" height="2" fill="#1f6f5b" />
+  </symbol>
+
+  <!-- Cutscene Event Star -->
+  <symbol id="icon-cutscene-star" viewBox="0 0 24 24">
+    <polygon points="12,2 14.9,8.6 22,9.3 16.6,14 18.2,21 12,17.3 5.8,21 7.4,14 2,9.3 9.1,8.6" fill="#f4c430" stroke="#202830" stroke-width="1.8" stroke-linejoin="round" />
+    <circle cx="12" cy="12" r="2.5" fill="#4cd9a8" />
+  </symbol>
+
+  <!-- Wireless Link / Rooms -->
+  <symbol id="icon-rooms" viewBox="0 0 24 24">
+    <circle cx="12" cy="15" r="3" fill="#4cd9a8" stroke="#202830" stroke-width="1.6" />
+    <path d="M7 12 A7 7 0 0 1 17 12" fill="none" stroke="#f8f4dc" stroke-width="2.2" stroke-linecap="round" />
+    <path d="M4 9 A11 11 0 0 1 20 9" fill="none" stroke="#f4c430" stroke-width="2.2" stroke-linecap="round" />
+    <rect x="10.5" y="18" width="3" height="3" fill="#f8f4dc" stroke="#202830" stroke-width="1.2" />
+  </symbol>
+
+  <!-- Pokédollar Coin -->
+  <symbol id="icon-coin-yen" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="9" fill="#f4c430" stroke="#202830" stroke-width="2" />
+    <path d="M8.5 7 L12 12 L15.5 7 M12 12 V17.5 M8.5 13.5 H15.5 M8.5 16 H15.5" fill="none" stroke="#202830" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+  </symbol>
+
+  <!-- Bag Item Satchel -->
+  <symbol id="icon-bag-item" viewBox="0 0 24 24">
+    <path d="M8 7 V5 A4 4 0 0 1 16 5 V7" fill="none" stroke="#202830" stroke-width="2" />
+    <rect x="4" y="7" width="16" height="13" rx="2" fill="#e07a5f" stroke="#202830" stroke-width="2" />
+    <rect x="4" y="7" width="16" height="5" fill="#f4a261" stroke="#202830" stroke-width="1.6" />
+    <rect x="10" y="10.5" width="4" height="3" fill="#f4c430" stroke="#202830" stroke-width="1.2" />
+  </symbol>
+
+  <!-- Audio On / Off -->
+  <symbol id="icon-audio-on" viewBox="0 0 24 24">
+    <polygon points="4,9 9,9 14,4 14,20 9,15 4,15" fill="#f8f4dc" stroke="#202830" stroke-width="1.8" stroke-linejoin="round" />
+    <path d="M17 8.5 A5 5 0 0 1 17 15.5" fill="none" stroke="#4cd9a8" stroke-width="2.2" stroke-linecap="round" />
+    <path d="M19.5 6 A8.5 8.5 0 0 1 19.5 18" fill="none" stroke="#f4c430" stroke-width="2" stroke-linecap="round" />
+  </symbol>
+
+  <symbol id="icon-audio-off" viewBox="0 0 24 24">
+    <polygon points="4,9 9,9 14,4 14,20 9,15 4,15" fill="#8d99ae" stroke="#202830" stroke-width="1.8" stroke-linejoin="round" />
+    <line x1="17" y1="9" x2="21" y2="15" stroke="#ff595e" stroke-width="2.4" stroke-linecap="round" />
+    <line x1="21" y1="9" x2="17" y2="15" stroke="#ff595e" stroke-width="2.4" stroke-linecap="round" />
+  </symbol>
+
+  <!-- Fullscreen & Hide HUD -->
+  <symbol id="icon-fullscreen" viewBox="0 0 24 24">
+    <path d="M4 9 V4 H9 M15 4 H20 V9 M20 15 V20 H15 M9 20 H4 V15" fill="none" stroke="#f8f4dc" stroke-width="2.4" stroke-linecap="square" />
+  </symbol>
+
+  <symbol id="icon-eye-hide" viewBox="0 0 24 24">
+    <path d="M2 12 C5 6.5 19 6.5 22 12 C19 17.5 5 17.5 2 12 Z" fill="#f8f4dc" stroke="#202830" stroke-width="1.8" />
+    <circle cx="12" cy="12" r="3" fill="#2d9575" stroke="#202830" stroke-width="1.4" />
+  </symbol>
+</svg>

@@ -1,0 +1,15 @@
+{
+  "name": "pokemon-web-multiplayer",
+  "version": "1.0.0",
+  "description": "Pokemon Emerald Expansion Web Multiplayer (4-Player Co-op 2v2, Soul-Link Nuzlocke, Seeded Randomizer & Cloudflare Relay)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "chunk": "python tools/chunk_assets.py",
+    "deploy": "npx wrangler deploy",
+    "dev:worker": "npx wrangler dev"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

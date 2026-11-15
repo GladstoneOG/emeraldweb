@@ -1,0 +1,7 @@
+# Exclude unchunked >25 MiB binary assets from Cloudflare Workers static uploads.
+# Browsers load <19 MiB parts from /chunks/ and cache them in IndexedDB.
+index.wasm
+*.data
+*.pck
+.DS_Store
+Thumbs.db

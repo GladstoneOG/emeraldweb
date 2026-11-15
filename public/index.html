@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Pokémon Emerald Web Multiplayer — Co-op &amp; Soul-Link</title>
+  <link rel="icon" type="image/svg+xml" href="/icons.svg" />
+  <link rel="stylesheet" href="/emerald_ui.css" />
+</head>
+<body>
+  <!-- Inline Gen 3 Emerald SVG Sprite Sheet (prevents Chromium external <use> flash on DOM updates) -->
+  <svg id="emerald-icon-sheet" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden;pointer-events:none;">
+    <!-- Emerald Brand Gem Crest -->
+    <symbol id="icon-emerald-crest" viewBox="0 0 32 32">
+      <polygon points="16,2 27,8 27,24 16,30 5,24 5,8" fill="#154c3e" stroke="#202830" stroke-width="2" />
+      <polygon points="16,4 25,9 25,23 16,28 7,23 7,9" fill="#2d9575" />
+      <polygon points="16,7 22,11 22,21 16,25 10,21 10,11" fill="#4cd9a8" />
+      <polygon points="16,7 22,11 16,16 10,11" fill="#84f0c4" />
+      <polygon points="16,16 22,21 16,25 10,21" fill="#1f6f5b" />
+      <rect x="13" y="12" width="3" height="3" fill="#f8f4dc" />
+      <rect x="14" y="2" width="4" height="2" fill="#f4c430" />
+      <rect x="14" y="28" width="4" height="2" fill="#f4c430" />
+    </symbol>
+
+    <!-- Poké Balls -->
+    <symbol id="icon-pokeball" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="10" fill="#202830" />
+      <path d="M4 12 A8 8 0 0 1 20 12 Z" fill="#e63946" />
+      <path d="M6 10 A6 6 0 0 1 14 6" fill="none" stroke="#ff8fa3" stroke-width="2" stroke-linecap="round" />
+      <path d="M4 12 A8 8 0 0 0 20 12 Z" fill="#f8f4dc" />
+      <rect x="3" y="11" width="18" height="2" fill="#202830" />
+      <circle cx="12" cy="12" r="4" fill="#202830" />
+      <circle cx="12" cy="12" r="2.2" fill="#f8f4dc" />
+    </symbol>
+
+    <symbol id="icon-greatball" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="10" fill="#202830" />
+      <path d="M4 12 A8 8 0 0 1 20 12 Z" fill="#2a6fdb" />
+      <polygon points="5,8 9,10 8,12 4,10" fill="#e63946" />
+      <polygon points="19,8 15,10 16,12 20,10" fill="#e63946" />
+      <path d="M4 12 A8 8 0 0 0 20 12 Z" fill="#f8f4dc" />
+      <rect x="3" y="11" width="18" height="2" fill="#202830" />
+      <circle cx="12" cy="12" r="4" fill="#202830" />
+      <circle cx="12" cy="12" r="2.2" fill="#f8f4dc" />
+    </symbol>
+
+    <symbol id="icon-ultraball" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="10" fill="#202830" />
+      <path d="M4 12 A8 8 0 0 1 20 12 Z" fill="#32374a" />
+      <rect x="6" y="5" width="3" height="6" fill="#f4c430" />
+      <rect x="15" y="5" width="3" height="6" fill="#f4c430" />
+      <rect x="8" y="5" width="8" height="2.2" fill="#f4c430" />
+      <path d="M4 12 A8 8 0 0 0 20 12 Z" fill="#f8f4dc" />
+      <rect x="3" y="11" width="18" height="2" fill="#202830" />
+      <circle cx="12" cy="12" r="4" fill="#202830" />
+      <circle cx="12" cy="12" r="2.2" fill="#f8f4dc" />
+    </symbol>
+
+    <symbol id="icon-masterball" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="10" fill="#202830" />
+      <path d="M4 12 A8 8 0 0 1 20 12 Z" fill="#6f42c1" />
+      <circle cx="7" cy="8" r="2" fill="#f06595" />
+      <circle cx="17" cy="8" r="2" fill="#f06595" />
+      <path d="M9 9 L10.5 6 L12 8 L13.5 6 L15 9" fill="none" stroke="#f8f4dc" stroke-width="1.5" stroke-linejoin="round" />
+      <path d="M4 12 A8 8 0 0 0 20 12 Z" fill="#f8f4dc" />
+      <rect x="3" y="11" width="18" height="2" fill="#202830" />
+      <circle cx="12" cy="12" r="4" fill="#202830" />
+      <circle cx="12" cy="12" r="2.2" fill="#f8f4dc" />
+    </symbol>
+
+    <!-- Hoenn 8 Gym Badges -->
+    <symbol id="icon-badge-stone" viewBox="0 0 24 24">
+      <polygon points="12,2 20,7 19,17 12,22 5,17 4,7" fill="#9c8a72" stroke="#202830" stroke-width="1.8" />
+      <polygon points="12,5 17,8 16,15 12,19 8,15 7,8" fill="#d8c3a5" />
+      <polygon points="12,8 15,10 14,14 12,16 10,14 9,10" fill="#e6b85c" />
+    </symbol>
+
+    <symbol id="icon-badge-knuckle" viewBox="0 0 24 24">
+      <polygon points="12,2 21,9 18,21 6,21 3,9" fill="#c94c38" stroke="#202830" stroke-width="1.8" />
+      <polygon points="12,5 18,10 16,18 8,18 6,10" fill="#f4b942" />
+      <rect x="9" y="9" width="6" height="6" fill="#e63946" stroke="#202830" stroke-width="1.2" />
+      <rect x="11" y="10" width="2" height="4" fill="#f8f4dc" />
+    </symbol>
+
+    <symbol id="icon-badge-dynamo" viewBox="0 0 24 24">
+      <polygon points="14,2 20,8 15,12 20,16 10,22 4,16 9,12 4,8" fill="#f4c430" stroke="#202830" stroke-width="1.8" />
+      <polygon points="13,5 17,8 12,12 16,16 11,19 7,16 11,12 7,8" fill="#fff3a1" />
+    </symbol>
+
+    <symbol id="icon-badge-heat" viewBox="0 0 24 24">
+      <path d="M12 2 C15 6 19 8 19 14 C19 19 15.8 22 12 22 C8.2 22 5 19 5 14 C5 9 8 7 9 4 C10 6 11 5 12 2 Z" fill="#e63946" stroke="#202830" stroke-width="1.8" />
+      <path d="M12 8 C14 10 16 12 16 15 C16 18 14.2 19.5 12 19.5 C9.8 19.5 8 18 8 15 C8 12 10 10 12 8 Z" fill="#ff9f1c" />
+      <circle cx="12" cy="15.5" r="2" fill="#fff3a1" />
+    </symbol>
+
+    <symbol id="icon-badge-balance" viewBox="0 0 24 24">
+      <polygon points="12,2 16,8 22,12 16,16 12,22 8,16 2,12 8,8" fill="#d8e2dc" stroke="#202830" stroke-width="1.8" />
+      <polygon points="12,5 14.8,9.2 19,12 14.8,14.8 12,19 9.2,14.8 5,12 9.2,9.2" fill="#4cd9a8" />
+      <circle cx="12" cy="12" r="2.3" fill="#f8f4dc" stroke="#202830" stroke-width="1" />
+    </symbol>
+
+    <symbol id="icon-badge-feather" viewBox="0 0 24 24">
+      <path d="M19 3 C12 4 6 9 4 17 L8 21 C15 19 20 13 21 5 Z" fill="#3a86ff" stroke="#202830" stroke-width="1.8" />
+      <path d="M17 6 C12 7 8 11 7 16 L9 18 C14 16 17 12 18 7 Z" fill="#8ecae6" />
+      <line x1="6" y1="19" x2="17" y2="7" stroke="#f8f4dc" stroke-width="1.6" />
+    </symbol>
+
+    <symbol id="icon-badge-mind" viewBox="0 0 24 24">
+      <path d="M11 3 A9 9 0 1 0 11 21 A6.5 6.5 0 1 1 11 3 Z" fill="#e63946" stroke="#202830" stroke-width="1.6" />
+      <circle cx="15" cy="12" r="5" fill="#f4c430" stroke="#202830" stroke-width="1.6" />
+      <circle cx="15" cy="12" r="2.2" fill="#fff3a1" />
+    </symbol>
+
+    <symbol id="icon-badge-rain" viewBox="0 0 24 24">
+      <path d="M12 2 C16 8 19 11.5 19 15.5 A7 7 0 0 1 5 15.5 C5 11.5 8 8 12 2 Z" fill="#2ec4b6" stroke="#202830" stroke-width="1.8" />
+      <path d="M12 6 C14.5 10 16 12.2 16 15 A4 4 0 0 1 8 15 C8 12.2 9.5 10 12 6 Z" fill="#90e0ef" />
+      <circle cx="10.5" cy="14" r="1.4" fill="#f8f4dc" />
+    </symbol>
+
+    <!-- Soul-Link Chain & Broken Chain -->
+    <symbol id="icon-link-chain" viewBox="0 0 24 24">
+      <rect x="3" y="8" width="10" height="8" rx="3" fill="none" stroke="#202830" stroke-width="4" />
+      <rect x="3" y="8" width="10" height="8" rx="3" fill="none" stroke="#4cd9a8" stroke-width="2" />
+      <rect x="11" y="8" width="10" height="8" rx="3" fill="none" stroke="#202830" stroke-width="4" />
+      <rect x="11" y="8" width="10" height="8" rx="3" fill="none" stroke="#f4c430" stroke-width="2" />
+      <rect x="8" y="10.5" width="8" height="3" fill="#f8f4dc" stroke="#202830" stroke-width="1.2" />
+    </symbol>
+
+    <symbol id="icon-link-broken" viewBox="0 0 24 24">
+      <path d="M9 8 H5 A3 3 0 0 0 5 16 H9" fill="none" stroke="#202830" stroke-width="4" stroke-linecap="square" />
+      <path d="M9 8 H5 A3 3 0 0 0 5 16 H9" fill="none" stroke="#8d99ae" stroke-width="2" stroke-linecap="square" />
+      <path d="M15 8 H19 A3 3 0 0 1 19 16 H15" fill="none" stroke="#202830" stroke-width="4" stroke-linecap="square" />
+      <path d="M15 8 H19 A3 3 0 0 1 19 16 H15" fill="none" stroke="#e63946" stroke-width="2" stroke-linecap="square" />
+      <path d="M11 4 L13 8 L10 12 L14 16 L11 20" fill="none" stroke="#ff595e" stroke-width="2" stroke-linecap="round" />
+    </symbol>
+
+    <!-- Graveyard Tombstone -->
+    <symbol id="icon-tombstone" viewBox="0 0 24 24">
+      <path d="M6 20 V10 A6 6 0 0 1 18 10 V20 Z" fill="#8b96a3" stroke="#202830" stroke-width="2" />
+      <path d="M8 19 V10 A4 4 0 0 1 16 10 V19 Z" fill="#b4bec9" />
+      <rect x="4" y="19" width="16" height="3" fill="#525b66" stroke="#202830" stroke-width="1.5" />
+      <rect x="11" y="7" width="2" height="7" fill="#414852" />
+      <rect x="9" y="9" width="6" height="2" fill="#414852" />
+      <rect x="3" y="21" width="4" height="2" fill="#2d9575" />
+      <rect x="17" y="21" width="4" height="2" fill="#2d9575" />
+    </symbol>
+
+    <!-- Host Crown -->
+    <symbol id="icon-host-crown" viewBox="0 0 24 24">
+      <polygon points="3,18 3,7 8,12 12,5 16,12 21,7 21,18" fill="#f4c430" stroke="#202830" stroke-width="2" stroke-linejoin="round" />
+      <rect x="4" y="16" width="16" height="3" fill="#d99b18" stroke="#202830" stroke-width="1.5" />
+      <rect x="10.5" y="10.5" width="3" height="3" fill="#2d9575" />
+      <circle cx="3.5" cy="6.5" r="1.5" fill="#fff3a1" stroke="#202830" stroke-width="1" />
+      <circle cx="12" cy="4.5" r="1.5" fill="#fff3a1" stroke="#202830" stroke-width="1" />
+      <circle cx="20.5" cy="6.5" r="1.5" fill="#fff3a1" stroke="#202830" stroke-width="1" />
+    </symbol>
+
+    <!-- Co-op Party Shield -->
+    <symbol id="icon-coop-shield" viewBox="0 0 24 24">
+      <path d="M12 2 L20 5 V12 C20 17 16 20.5 12 22 C8 20.5 4 17 4 12 V5 Z" fill="#f4c430" stroke="#202830" stroke-width="2" />
+      <path d="M12 4.5 V19.5 C9 18.2 6.5 15.5 6.5 12 V6.5 Z" fill="#2d9575" />
+      <path d="M12 4.5 V19.5 C15 18.2 17.5 15.5 17.5 12 V6.5 Z" fill="#3a86ff" />
+      <rect x="11" y="7" width="2" height="9" fill="#f8f4dc" />
+      <rect x="8.5" y="10" width="7" height="2" fill="#f8f4dc" />
+    </symbol>
+
+    <!-- Trade Arrows -->
+    <symbol id="icon-trade-arrows" viewBox="0 0 24 24">
+      <polygon points="3,8 15,8 15,5 21,9.5 15,14 15,11 3,11" fill="#4cd9a8" stroke="#202830" stroke-width="1.6" stroke-linejoin="round" />
+      <polygon points="21,13 9,13 9,10 3,14.5 9,19 9,16 21,16" fill="#f4c430" stroke="#202830" stroke-width="1.6" stroke-linejoin="round" />
+    </symbol>
+
+    <!-- Speed Chevrons 1x / 2x / 3x -->
+    <symbol id="icon-speed-1x" viewBox="0 0 24 24">
+      <polygon points="7,5 18,12 7,19" fill="#4cd9a8" stroke="#202830" stroke-width="2" stroke-linejoin="round" />
+    </symbol>
+
+    <symbol id="icon-speed-2x" viewBox="0 0 24 24">
+      <polygon points="3,5 12,12 3,19" fill="#4cd9a8" stroke="#202830" stroke-width="1.8" stroke-linejoin="round" />
+      <polygon points="12,5 21,12 12,19" fill="#84f0c4" stroke="#202830" stroke-width="1.8" stroke-linejoin="round" />
+    </symbol>
+
+    <symbol id="icon-speed-3x" viewBox="0 0 24 24">
+      <polygon points="2,5 9.5,12 2,19" fill="#4cd9a8" stroke="#202830" stroke-width="1.6" stroke-linejoin="round" />
+      <polygon points="8.5,5 16,12 8.5,19" fill="#f4c430" stroke="#202830" stroke-width="1.6" stroke-linejoin="round" />
+      <polygon points="15,5 22.5,12 15,19" fill="#ff9f1c" stroke="#202830" stroke-width="1.6" stroke-linejoin="round" />
+    </symbol>
+
+    <!-- Teleport Warp Pad -->
+    <symbol id="icon-warp-pad" viewBox="0 0 24 24">
+      <ellipse cx="12" cy="18" rx="9" ry="4" fill="#1f6f5b" stroke="#202830" stroke-width="1.8" />
+      <ellipse cx="12" cy="17.5" rx="6" ry="2.4" fill="#4cd9a8" />
+      <polygon points="12,3 17,9 14,9 14,15 10,15 10,9 7,9" fill="#90e0ef" stroke="#202830" stroke-width="1.5" stroke-linejoin="round" />
+    </symbol>
+
+    <!-- Friendly PvP Swords -->
+    <symbol id="icon-pvp-swords" viewBox="0 0 24 24">
+      <polygon points="4,4 7,4 16,13 18,11 20,13 17,16 20,19 18,21 15,18 12,21 10,19 12,17 4,7" fill="#d8e2dc" stroke="#202830" stroke-width="1.5" stroke-linejoin="round" />
+      <polygon points="20,4 17,4 8,13 6,11 4,13 7,16 4,19 6,21 9,18 12,21 14,19 12,17 20,7" fill="#f4c430" stroke="#202830" stroke-width="1.5" stroke-linejoin="round" />
+    </symbol>
+
+    <!-- Emerald GBA Cartridge (Run Saves) -->
+    <symbol id="icon-save-cart" viewBox="0 0 24 24">
+      <path d="M4 4 H20 V20 H4 Z" fill="#2d9575" stroke="#202830" stroke-width="2" />
+      <rect x="6" y="3" width="12" height="3" fill="#4cd9a8" stroke="#202830" stroke-width="1.4" />
+      <rect x="6" y="8" width="12" height="9" fill="#f8f4dc" stroke="#202830" stroke-width="1.4" />
+      <rect x="8" y="10" width="8" height="2" fill="#e63946" />
+      <rect x="8" y="13" width="6" height="2" fill="#1f6f5b" />
+    </symbol>
+
+    <!-- Cutscene Event Star -->
+    <symbol id="icon-cutscene-star" viewBox="0 0 24 24">
+      <polygon points="12,2 14.9,8.6 22,9.3 16.6,14 18.2,21 12,17.3 5.8,21 7.4,14 2,9.3 9.1,8.6" fill="#f4c430" stroke="#202830" stroke-width="1.8" stroke-linejoin="round" />
+      <circle cx="12" cy="12" r="2.5" fill="#4cd9a8" />
+    </symbol>
+
+    <!-- Wireless Link / Rooms -->
+    <symbol id="icon-rooms" viewBox="0 0 24 24">
+      <circle cx="12" cy="15" r="3" fill="#4cd9a8" stroke="#202830" stroke-width="1.6" />
+      <path d="M7 12 A7 7 0 0 1 17 12" fill="none" stroke="#f8f4dc" stroke-width="2.2" stroke-linecap="round" />
+      <path d="M4 9 A11 11 0 0 1 20 9" fill="none" stroke="#f4c430" stroke-width="2.2" stroke-linecap="round" />
+      <rect x="10.5" y="18" width="3" height="3" fill="#f8f4dc" stroke="#202830" stroke-width="1.2" />
+    </symbol>
+
+    <!-- Pokédollar Coin -->
+    <symbol id="icon-coin-yen" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9" fill="#f4c430" stroke="#202830" stroke-width="2" />
+      <path d="M8.5 7 L12 12 L15.5 7 M12 12 V17.5 M8.5 13.5 H15.5 M8.5 16 H15.5" fill="none" stroke="#202830" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+    </symbol>
+
+    <!-- Bag Item Satchel -->
+    <symbol id="icon-bag-item" viewBox="0 0 24 24">
+      <path d="M8 7 V5 A4 4 0 0 1 16 5 V7" fill="none" stroke="#202830" stroke-width="2" />
+      <rect x="4" y="7" width="16" height="13" rx="2" fill="#e07a5f" stroke="#202830" stroke-width="2" />
+      <rect x="4" y="7" width="16" height="5" fill="#f4a261" stroke="#202830" stroke-width="1.6" />
+      <rect x="10" y="10.5" width="4" height="3" fill="#f4c430" stroke="#202830" stroke-width="1.2" />
+    </symbol>
+
+    <!-- Audio On / Off -->
+    <symbol id="icon-audio-on" viewBox="0 0 24 24">
+      <polygon points="4,9 9,9 14,4 14,20 9,15 4,15" fill="#f8f4dc" stroke="#202830" stroke-width="1.8" stroke-linejoin="round" />
+      <path d="M17 8.5 A5 5 0 0 1 17 15.5" fill="none" stroke="#4cd9a8" stroke-width="2.2" stroke-linecap="round" />
+      <path d="M19.5 6 A8.5 8.5 0 0 1 19.5 18" fill="none" stroke="#f4c430" stroke-width="2" stroke-linecap="round" />
+    </symbol>
+
+    <symbol id="icon-audio-off" viewBox="0 0 24 24">
+      <polygon points="4,9 9,9 14,4 14,20 9,15 4,15" fill="#8d99ae" stroke="#202830" stroke-width="1.8" stroke-linejoin="round" />
+      <line x1="17" y1="9" x2="21" y2="15" stroke="#ff595e" stroke-width="2.4" stroke-linecap="round" />
+      <line x1="21" y1="9" x2="17" y2="15" stroke="#ff595e" stroke-width="2.4" stroke-linecap="round" />
+    </symbol>
+
+    <!-- Fullscreen & Hide HUD -->
+    <symbol id="icon-fullscreen" viewBox="0 0 24 24">
+      <path d="M4 9 V4 H9 M15 4 H20 V9 M20 15 V20 H15 M9 20 H4 V15" fill="none" stroke="#f8f4dc" stroke-width="2.4" stroke-linecap="square" />
+    </symbol>
+
+    <symbol id="icon-eye-hide" viewBox="0 0 24 24">
+      <path d="M2 12 C5 6.5 19 6.5 22 12 C19 17.5 5 17.5 2 12 Z" fill="#f8f4dc" stroke="#202830" stroke-width="1.8" />
+      <circle cx="12" cy="12" r="3" fill="#2d9575" stroke="#202830" stroke-width="1.4" />
+    </symbol>
+  </svg>
+
+  <!-- Loading Overlay -->
+  <div id="loading-overlay">
+    <div id="loading-card" class="em-panel">
+      <svg class="em-icon-xl" style="width:52px;height:52px;margin-bottom:8px;">
+        <use href="#icon-emerald-crest"></use>
+      </svg>
+      <div class="gba-font" style="font-size:16px;font-weight:700;color:#154c3e;">
+        POKÉMON EMERALD MP
+      </div>
+      <div style="font-size:12px;color:#55626d;margin-top:4px;">
+        Hoenn Co-op • Always-2v2 • Route Soul-Link • Seeded Randomizer
+      </div>
+      <div id="loading-status" class="gba-font" style="font-size:11px;margin-top:14px;color:#202830;">
+        Checking WebAssembly Engine &amp; Local Cache...
+      </div>
+      <div class="progress-track">
+        <div id="progress-fill"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Restore HUD Pill (visible when HUD is hidden via F2) -->
+  <button id="show-hud-pill" class="em-btn primary" type="button" title="Show Companion HUD (F2)">
+    <svg class="em-icon"><use href="#icon-eye-hide"></use></svg>
+    Show HUD (F2)
+  </button>
+
+  <div id="app-shell">
+    <!-- Topbar -->
+    <header id="topbar">
+      <div class="bar-group">
+        <div class="brand">
+          <svg class="em-icon em-icon-lg"><use href="#icon-emerald-crest"></use></svg>
+          <span>EMERALD MP</span>
+          <span class="brand-sub">4P CO-OP</span>
+        </div>
+
+        <span id="net-status-badge" class="em-badge">
+          <svg class="em-icon"><use href="#icon-pokeball"></use></svg>
+          Offline / Solo
+        </span>
+
+        <span id="local-tutorial-badge" class="em-badge tutorial" style="display:none;" title="Finish starter tutorial (May battle, Pokédex, Poké Balls &amp; Running Shoes) first">
+          TUTORIAL
+        </span>
+
+        <span id="run-gameover-badge" class="em-badge gameover" style="display:none;" title="Run is Game Over">
+          RUN GAME OVER
+        </span>
+
+        <button id="copy-invite-btn" class="em-btn gold sm" type="button" style="display:none;" title="Copy Room Invite Link">
+          🔗 Copy Invite
+        </button>
+
+        <span id="run-seed-pill" class="em-badge" title="Current Campaign Seed">
+          SEED: ---
+        </span>
+      </div>
+
+      <div class="bar-group">
+        <label for="player-name-input" class="gba-font" style="font-size:11px;color:#a9d9c8;">TRAINER:</label>
+        <input
+          id="player-name-input"
+          class="em-input em-input-dark gba-font"
+          style="width:118px;padding:3px 7px;font-size:11px;"
+          type="text"
+          maxlength="20"
+          placeholder="Your Name"
+        />
+
+        <!-- Host-Only Global Speed Control (1x / 2x / 3x) -->
+        <div id="speed-control-group" class="speed-group" title="Host-Only Global Game Speed (Syncs to all players)">
+          <span class="speed-label">SPD</span>
+          <button class="speed-btn active" type="button" data-speed="1">
+            <svg class="em-icon" style="width:12px;height:12px;"><use href="#icon-speed-1x"></use></svg>
+            1x
+          </button>
+          <button class="speed-btn" type="button" data-speed="2">
+            <svg class="em-icon" style="width:12px;height:12px;"><use href="#icon-speed-2x"></use></svg>
+            2x
+          </button>
+          <button class="speed-btn" type="button" data-speed="3">
+            <svg class="em-icon" style="width:12px;height:12px;"><use href="#icon-speed-3x"></use></svg>
+            3x
+          </button>
+          <span id="speed-readonly-pill" class="speed-readonly-pill" title="Controlled by Room Host">
+            <svg class="em-icon" style="width:12px;height:12px;"><use href="#icon-host-crown"></use></svg>
+            HOST: 1x
+          </span>
+        </div>
+
+        <button id="open-rooms-btn" class="em-btn primary" type="button">
+          <svg class="em-icon"><use href="#icon-rooms"></use></svg>
+          Rooms &amp; Setup (<span id="room-count-num">0</span>)
+        </button>
+
+        <button id="open-trade-btn" class="em-btn gold" type="button" title="Anywhere Quick-Trade">
+          <svg class="em-icon"><use href="#icon-trade-arrows"></use></svg>
+          Quick-Trade
+        </button>
+
+        <button id="open-saves-btn" class="em-btn" type="button" title="Hybrid Campaign Run Save Manager">
+          <svg class="em-icon"><use href="#icon-save-cart"></use></svg>
+          Run Saves
+        </button>
+
+        <button id="toggle-sidebar-btn" class="em-btn dark-ghost" type="button" title="Toggle Soul-Link Matrix Sidebar">
+          Soul-Link HUD
+        </button>
+
+        <div class="audio-control-group" title="Game Audio Volume">
+          <button id="audio-mute-btn" class="em-btn dark-ghost sm" type="button" title="Toggle Audio Mute">
+            <svg id="audio-mute-icon" class="em-icon"><use href="#icon-audio-on"></use></svg>
+          </button>
+          <input type="range" id="audio-volume-slider" class="em-volume-slider" min="0" max="100" value="80" step="1" aria-label="Game Audio Volume">
+          <span id="audio-volume-pct" class="audio-volume-pct">80%</span>
+        </div>
+
+        <button id="fullscreen-btn" class="em-btn dark-ghost sm" type="button" title="Fullscreen (F11)">
+          <svg class="em-icon"><use href="#icon-fullscreen"></use></svg>
+        </button>
+
+        <button id="hide-hud-btn" class="em-btn dark-ghost sm" type="button" title="Hide HUD (F2)">
+          <svg class="em-icon"><use href="#icon-eye-hide"></use></svg>
+          Hide
+        </button>
+      </div>
+    </header>
+
+    <!-- Party Up / Co-op & QoL Strip -->
+    <div id="coop-qol-bar">
+      <div class="bar-group">
+        <span class="gba-font" style="font-size:10px;color:#a9d9c8;">HOENN BADGES:</span>
+        <div id="hoenn-badges-strip" class="badge-strip"></div>
+      </div>
+
+      <div id="peer-actions-strip" class="peer-actions-strip"></div>
+
+      <!-- Phase 0 Demo / Preview Sim Controls (auto-hidden once WASM Core boots) -->
+      <div id="preview-sim-controls" class="bar-group">
+        <span class="gba-font" style="font-size:10px;color:#ffd43b;">PREVIEW SIM:</span>
+        <button id="sim-catch-btn" class="em-btn dark-ghost sm" type="button">+Catch Link</button>
+        <button id="sim-faint-btn" class="em-btn dark-ghost sm" type="button">Faint Lead</button>
+        <button id="sim-battle-btn" class="em-btn dark-ghost sm" type="button">2v2 Toast</button>
+        <button id="sim-cutscene-btn" class="em-btn dark-ghost sm" type="button">Cutscene</button>
+      </div>
+    </div>
+
+    <!-- Main GBA Stage + Live Soul-Link Matrix Sidebar -->
+    <div id="main-workspace">
+      <main id="game-stage">
+        <div id="canvas-frame">
+          <canvas id="canvas" width="240" height="160" oncontextmenu="event.preventDefault();" tabindex="0">
+            HTML5 canvas is not supported in this browser.
+          </canvas>
+          <div id="wasm-preview-pill">
+            <span class="gba-font" style="color:#84f0c4;">
+              PREVIEW MODE: index.wasm not compiled yet — Relay, Speed Sync, Soul-Link Matrix, Quick-Trade &amp; Saves are live!
+            </span>
+            <button id="dismiss-preview-pill-btn" class="em-btn dark-ghost sm" type="button">Dismiss</button>
+          </div>
+        </div>
+        <div id="stage-controls-hint" class="stage-controls-hint gba-font">
+          <span><strong>D-Pad:</strong> Arrows/WASD</span>
+          <span><strong>A (Confirm):</strong> Z / K</span>
+          <span><strong>B:</strong> X / J</span>
+          <span><strong>Start:</strong> Enter</span>
+          <span><strong>Select:</strong> Shift / Backspace</span>
+          <span><strong>L/R:</strong> Q / E</span>
+          <span><strong>Gamepad</strong> OK</span>
+        </div>
+      </main>
+
+      <!-- Live Soul-Link Matrix Sidebar -->
+      <aside id="soul-link-sidebar" aria-label="Live Soul-Link Matrix">
+        <div class="sidebar-header">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <svg class="em-icon"><use href="#icon-link-chain"></use></svg>
+            <span class="gba-font" style="font-size:12px;font-weight:700;">SOUL-LINK MATRIX</span>
+          </div>
+          <span id="soullink-mode-badge" class="em-badge ok" style="font-size:10px;padding:2px 6px;">
+            2P PAIRS
+          </span>
+        </div>
+
+        <div id="sidebar-gameover-banner" class="sidebar-gameover-banner" style="display:none;" role="status">
+          <svg class="em-icon em-icon-lg"><use href="#icon-tombstone"></use></svg>
+          <div style="min-width:0;">
+            <div class="gba-font" style="font-size:11px;font-weight:700;">RUN GAME OVER</div>
+            <div id="sidebar-gameover-desc" style="font-size:10px;opacity:0.95;">Whiteout ended this Soul-Link Nuzlocke run. Reset or Host a new run.</div>
+          </div>
+        </div>
+
+        <div class="sidebar-tabs">
+          <button id="tab-btn-parties" class="sidebar-tab active" type="button" data-sidebar-tab="parties">
+            <svg class="em-icon" style="width:13px;height:13px;"><use href="#icon-pokeball"></use></svg>
+            Parties
+          </button>
+          <button id="tab-btn-routes" class="sidebar-tab" type="button" data-sidebar-tab="routes" title="Soul-Link Route Locks &amp; Dead Routes">
+            <svg class="em-icon" style="width:13px;height:13px;"><use href="#icon-link-chain"></use></svg>
+            Routes
+          </button>
+          <button id="tab-btn-graveyard" class="sidebar-tab" type="button" data-sidebar-tab="graveyard">
+            <svg class="em-icon" style="width:13px;height:13px;"><use href="#icon-tombstone"></use></svg>
+            Graveyard
+          </button>
+          <button id="tab-btn-log" class="sidebar-tab" type="button" data-sidebar-tab="log">
+            Feed
+          </button>
+        </div>
+
+        <div id="sidebar-content" class="sidebar-scroll"></div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Stardew-Style Global Cutscene Sync Banner -->
+  <div id="cutscene-sync-banner" class="em-panel">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <svg class="em-icon em-icon-lg"><use href="#icon-cutscene-star"></use></svg>
+        <div>
+          <div class="gba-font" style="font-size:12px;font-weight:700;color:#154c3e;">
+            GLOBAL STORY CUTSCENE SYNC
+          </div>
+          <div id="cutscene-title-text" style="font-size:12px;font-weight:600;">
+            Prof. Birch Rescue — Route 101
+          </div>
+        </div>
+      </div>
+      <button id="cutscene-finish-btn" class="em-btn primary sm" type="button">
+        Complete &amp; Return
+      </button>
+    </div>
+    <div id="cutscene-peers-row" class="cutscene-peers-row"></div>
+  </div>
+
+  <!-- Cross-Map Hybrid 2v2 Co-op Multi-Battle / PvP Join Toast -->
+  <div id="battle-join-toast" class="em-panel">
+    <div style="display:flex;align-items:flex-start;gap:10px;">
+      <svg class="em-icon em-icon-lg" style="margin-top:2px;"><use href="#icon-coop-shield"></use></svg>
+      <div style="flex:1;min-width:0;">
+        <div id="battle-toast-title" class="gba-font" style="font-size:12px;font-weight:700;color:#154c3e;">
+          CO-OP 2v2 BATTLE INVITE
+        </div>
+        <div id="battle-toast-desc" style="font-size:12px;margin:4px 0 8px 0;">
+          Partner encountered Wild Pokémon! Join across maps for 2v2 Multi-Battle?
+        </div>
+        <div style="display:flex;gap:6px;">
+          <button id="battle-accept-btn" class="em-btn primary sm" type="button">⚔️ Join 2v2 Battle</button>
+          <button id="battle-decline-btn" class="em-btn sm" type="button">Decline</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating Notification Toasts -->
+  <div id="toast-stack"></div>
+
+  <!-- ========================================================================
+       MODAL 1: Room Browser & Host Create / Run Setup
+       ======================================================================== -->
+  <div id="rooms-modal" class="em-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="rooms-modal-title">
+    <div class="em-modal em-panel">
+      <div class="em-modal-header">
+        <span id="rooms-modal-title">
+          <svg class="em-icon"><use href="#icon-rooms"></use></svg>
+          MULTIPLAYER ROOM BROWSER &amp; CAMPAIGN SETUP
+        </span>
+        <button class="em-btn sm" type="button" data-close-modal="rooms-modal">✕ Close</button>
+      </div>
+
+      <div class="em-modal-tabs">
+        <button class="em-modal-tab active" type="button" data-rooms-tab="browse">Browse Rooms &amp; Resume</button>
+        <button class="em-modal-tab" type="button" data-rooms-tab="create">Create / Host New Run</button>
+      </div>
+
+      <div class="em-modal-body">
+        <!-- Tab 1: Room Browser + Resume Picker -->
+        <div id="rooms-tab-browse">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+            <span id="relay-status-label" class="em-badge ok">Relay: Detecting...</span>
+            <div style="display:flex;gap:6px;">
+              <button id="refresh-rooms-btn" class="em-btn sm" type="button">🔄 Refresh Rooms</button>
+              <button id="switch-to-create-btn" class="em-btn primary sm" type="button">➕ Host New Run</button>
+              <button id="disconnect-room-btn" class="em-btn danger sm" type="button" style="display:none;">Leave Room</button>
+            </div>
+          </div>
+
+          <div id="rooms-join-error" class="em-section-box rooms-join-error" style="display:none;margin-bottom:10px;">
+            <strong class="gba-font" style="font-size:11px;color:#9f1239;">JOIN BLOCKED:</strong>
+            <span id="rooms-join-error-text" style="font-size:12px;"></span>
+          </div>
+
+          <div class="em-section-box" style="margin-bottom:10px;">
+            <div class="em-section-title">Active Online / LAN Rooms (Max 4 Players)</div>
+            <div id="rooms-list-container" class="em-list-box">
+              <div style="padding:14px;text-align:center;color:#55626d;">Searching relay for active rooms...</div>
+            </div>
+          </div>
+
+          <div class="em-grid-2">
+            <div class="em-section-box">
+              <div class="em-section-title">Direct Join &amp; Relay Server</div>
+              <div style="display:flex;gap:6px;margin-bottom:8px;">
+                <input id="direct-room-port-input" class="em-input" style="flex:1;" type="number" value="27462" placeholder="Room Code / Port" />
+                <button id="direct-join-btn" class="em-btn primary sm" type="button">Join Room</button>
+              </div>
+              <div style="font-size:11px;color:#55626d;margin-bottom:4px;">Cloudflare Worker Relay URL (blank = same host):</div>
+              <div style="display:flex;gap:6px;">
+                <input id="relay-url-input" class="em-input" style="flex:1;" type="text" placeholder="https://emeraldweb.johansans999.workers.dev" />
+                <button id="save-relay-btn" class="em-btn sm" type="button">Apply</button>
+              </div>
+            </div>
+
+            <div class="em-section-box">
+              <div class="em-section-title">Run Resume Picker (IndexedDB)</div>
+              <div id="resume-runs-list" class="em-list-box" style="max-height:130px;">
+                <div style="padding:10px;text-align:center;color:#55626d;">No saved runs yet.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2: Host Create / Run Setup -->
+        <div id="rooms-tab-create" style="display:none;">
+          <div class="em-grid-2" style="margin-bottom:10px;">
+            <div class="em-section-box">
+              <div class="em-section-title">Room &amp; Deterministic Seed</div>
+              <div style="display:flex;flex-direction:column;gap:7px;">
+                <label style="font-size:11px;font-weight:700;">Room Name</label>
+                <input id="setup-room-name" class="em-input" type="text" maxlength="32" />
+                <div style="display:flex;gap:6px;align-items:center;">
+                  <div style="flex:1;">
+                    <label style="font-size:11px;font-weight:700;display:block;margin-bottom:2px;">Campaign Seed</label>
+                    <input id="setup-seed-input" class="em-input" style="width:100%;" type="text" maxlength="24" />
+                  </div>
+                  <button id="randomize-seed-btn" class="em-btn gold sm" type="button" style="margin-top:16px;">🎲 Roll</button>
+                </div>
+                <div style="display:flex;gap:8px;">
+                  <div style="flex:1;">
+                    <label style="font-size:11px;font-weight:700;display:block;margin-bottom:2px;">Soul-Link Mode</label>
+                    <select id="setup-soullink-mode" class="em-select" style="width:100%;">
+                      <option value="pairs">2-Player Pairs (P1+P2 / P3+P4)</option>
+                      <option value="group">Full-Group Link (All 4 Players)</option>
+                    </select>
+                  </div>
+                  <div style="width:110px;">
+                    <label style="font-size:11px;font-weight:700;display:block;margin-bottom:2px;">Room Port</label>
+                    <input id="setup-room-port" class="em-input" style="width:100%;" type="number" value="27462" />
+                  </div>
+                </div>
+                <label class="em-check" style="margin-top:2px;">
+                  <input id="setup-battle-autopull" type="checkbox" />
+                  <span>Auto-pull Co-op Partner into 2v2 Multi-Battles</span>
+                </label>
+                <label class="em-check" style="margin-top:2px;">
+                  <input id="setup-fresh-reset" type="checkbox" />
+                  <span>Erase local Flash save &amp; start fresh New Game</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="em-section-box">
+              <div class="em-section-title">Nuzlocke Ruleset &amp; Presets</div>
+              <select id="setup-nuzlocke-preset" class="em-select" style="width:100%;margin-bottom:8px;">
+                <option value="standard_soullink">Standard Nuzlocke + Soul-Link (Default)</option>
+                <option value="hardcore">Hardcore Nuzlocke (Level Caps + Set + No Items)</option>
+                <option value="casual_coop">Casual Co-op (No Permadeath)</option>
+              </select>
+              <div class="em-toggle-grid">
+                <label class="em-check"><input id="nz-enabled" type="checkbox" checked /><span>Permadeath</span></label>
+                <label class="em-check"><input id="nz-dupes" type="checkbox" checked /><span>Dupes Clause</span></label>
+                <label class="em-check"><input id="nz-shiny" type="checkbox" checked /><span>Shiny Clause</span></label>
+                <label class="em-check"><input id="nz-level-caps" type="checkbox" /><span>Gym Level Caps</span></label>
+                <label class="em-check"><input id="nz-set-mode" type="checkbox" /><span>Set Mode</span></label>
+                <label class="em-check"><input id="nz-no-items" type="checkbox" /><span>No Battle Items</span></label>
+                <label class="em-check"><input id="nz-whiteout" type="checkbox" /><span>Wipe = Game Over</span></label>
+              </div>
+            </div>
+          </div>
+
+          <div class="em-section-box" style="margin-bottom:12px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+              <div class="em-section-title" style="margin:0;border:none;padding:0;">In-Engine Seeded Randomizer</div>
+              <select id="setup-randomizer-preset" class="em-select">
+                <option value="balanced">Balanced Default (Recommended)</option>
+                <option value="classic">Classic (+ Random Abilities)</option>
+                <option value="chaos">Chaos (Everything Randomized)</option>
+                <option value="off">Vanilla Hoenn (Randomizer Off)</option>
+              </select>
+            </div>
+            <div class="em-toggle-grid" style="grid-template-columns:repeat(3, minmax(0, 1fr));">
+              <label class="em-check" title="Randomize wild Pokémon species encountered in tall grass, caves, surfing, and fishing spots."><input id="rnd-wild" type="checkbox" checked /><span>Wild Encounters</span></label>
+              <label class="em-check" title="Randomize Professor Birch's starter choices and static/overworld encounter Pokémon."><input id="rnd-starters" type="checkbox" checked /><span>Starters &amp; Statics</span></label>
+              <label class="em-check" title="Randomize NPC trainer Pokémon species (single battles also scale into Always-2v2 doubles)."><input id="rnd-trainers" type="checkbox" checked /><span>2v2-Scaled Trainers</span></label>
+              <label class="em-check" title="Randomize overworld item balls, NPC/script gift items, trainer held items, and Poké Mart inventories (tutorial items, Key Items, HMs, and Mart slot-0 Poké Balls stay vanilla)."><input id="rnd-items" type="checkbox" /><span>Items, Gifts &amp; Marts</span></label>
+              <label class="em-check" title="Randomize each Pokémon species' Abilities deterministically by campaign seed."><input id="rnd-abilities" type="checkbox" /><span>Random Abilities</span></label>
+              <label class="em-check" title="Exclude Wonder Guard from randomized Ability rolls (only applies when Random Abilities is enabled)."><input id="rnd-ban-wg" type="checkbox" checked /><span>Ban Wonder Guard</span></label>
+              <label class="em-check" title="Randomize each species' level-up learnset (guarantees an early damaging STAB move)."><input id="rnd-movesets" type="checkbox" /><span>Random Movesets</span></label>
+              <label class="em-check" title="Randomize each Pokémon species' primary and secondary types."><input id="rnd-types" type="checkbox" /><span>Random Types</span></label>
+              <label class="em-check" title="Randomize Pokémon evolution targets to BST-compatible species."><input id="rnd-evos" type="checkbox" /><span>Random Evolutions</span></label>
+              <label class="em-check" title="Bias Gym Leaders, Elite Four, and Champion teams toward a cohesive elemental type theme."><input id="rnd-gym-themes" type="checkbox" checked /><span>Preserve Gym Themes</span></label>
+              <label class="em-check" title="Keep randomized wild, starter, static, and trainer Pokémon close to the original species' Base Stat Total (BST)."><input id="rnd-bst" type="checkbox" checked /><span>Similar BST Tiers</span></label>
+            </div>
+          </div>
+
+          <div style="display:flex;justify-content:flex-end;gap:8px;">
+            <button id="launch-host-room-btn" class="em-btn primary" type="button" style="padding:8px 16px;font-size:12px;">
+              <svg class="em-icon"><use href="#icon-host-crown"></use></svg>
+              Host Room &amp; Start Run
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================
+       MODAL 2: Anywhere Quick-Trade Modal (Atomic Pokemon + Items + Money)
+       ======================================================================== -->
+  <div id="trade-modal" class="em-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="trade-modal-title">
+    <div class="em-modal em-panel">
+      <div class="em-modal-header">
+        <span id="trade-modal-title">
+          <svg class="em-icon"><use href="#icon-trade-arrows"></use></svg>
+          ANYWHERE QUICK-TRADE (ATOMIC HOST ESCROW)
+        </span>
+        <button class="em-btn sm" type="button" data-close-modal="trade-modal">✕ Close</button>
+      </div>
+
+      <div class="em-modal-body">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <label for="trade-partner-select" class="gba-font" style="font-size:11px;font-weight:700;">TRADING WITH:</label>
+            <select id="trade-partner-select" class="em-select"></select>
+            <button id="trade-start-btn" class="em-btn primary sm" type="button">Request Trade</button>
+          </div>
+          <span id="trade-status-banner" class="em-badge" style="font-size:11px;">
+            Select an online peer to trade.
+          </span>
+        </div>
+
+        <div class="trade-split">
+          <!-- My Offer -->
+          <div id="trade-my-card" class="trade-offer-card">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span class="gba-font" style="font-size:12px;font-weight:700;color:#154c3e;">YOUR OFFER</span>
+              <span id="trade-my-lock-badge" class="em-badge">EDITING</span>
+            </div>
+
+            <div>
+              <label style="font-size:11px;font-weight:700;display:block;margin-bottom:3px;">Pokémon (LinkID travels with trade)</label>
+              <select id="trade-my-mon-select" class="em-select" style="width:100%;"></select>
+              <div id="trade-my-mon-preview" style="font-size:11px;color:#55626d;margin-top:3px;"></div>
+            </div>
+
+            <div>
+              <label style="font-size:11px;font-weight:700;display:block;margin-bottom:3px;">
+                <svg class="em-icon" style="width:13px;height:13px;"><use href="#icon-bag-item"></use></svg>
+                Add Bag Item
+              </label>
+              <div style="display:flex;gap:5px;">
+                <select id="trade-my-item-select" class="em-select" style="flex:1;"></select>
+                <input id="trade-my-item-qty" class="em-input" style="width:58px;" type="number" min="1" value="1" />
+                <button id="trade-add-item-btn" class="em-btn sm" type="button">+Add</button>
+              </div>
+              <div id="trade-my-items-list" style="margin-top:5px;display:flex;gap:4px;flex-wrap:wrap;"></div>
+            </div>
+
+            <div>
+              <label style="font-size:11px;font-weight:700;display:block;margin-bottom:3px;">
+                <svg class="em-icon" style="width:13px;height:13px;"><use href="#icon-coin-yen"></use></svg>
+                Money Offer (Available: <span id="trade-my-balance">¥0</span>)
+              </label>
+              <div style="display:flex;gap:6px;">
+                <input id="trade-my-money-input" class="em-input" style="flex:1;" type="number" min="0" step="50" value="0" />
+                <button id="trade-update-offer-btn" class="em-btn sm" type="button">Sync Offer</button>
+              </div>
+            </div>
+
+            <button id="trade-lock-btn" class="em-btn gold" type="button">🔒 Lock My Offer</button>
+          </div>
+
+          <!-- Center Escrow Controls -->
+          <div class="trade-center-col">
+            <svg class="em-icon-xl"><use href="#icon-trade-arrows"></use></svg>
+            <button id="trade-confirm-btn" class="em-btn primary" type="button" disabled>
+              ✓ Confirm Atomic Trade
+            </button>
+            <button id="trade-cancel-btn" class="em-btn danger sm" type="button">Cancel</button>
+          </div>
+
+          <!-- Partner Offer -->
+          <div id="trade-partner-card" class="trade-offer-card">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span id="trade-partner-name-label" class="gba-font" style="font-size:12px;font-weight:700;color:#154c3e;">PARTNER OFFER</span>
+              <span id="trade-partner-lock-badge" class="em-badge">WAITING</span>
+            </div>
+            <div id="trade-partner-mon-box" class="em-section-box" style="min-height:54px;font-size:12px;">
+              No Pokémon offered.
+            </div>
+            <div id="trade-partner-items-box" class="em-section-box" style="min-height:46px;font-size:12px;">
+              No Bag Items offered.
+            </div>
+            <div class="em-section-box" style="font-size:12px;display:flex;align-items:center;gap:6px;">
+              <svg class="em-icon"><use href="#icon-coin-yen"></use></svg>
+              <span>Money Offered:</span>
+              <strong id="trade-partner-money-label" class="gba-font">¥0</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================
+       MODAL 3: Hybrid Campaign Run Save Manager + Keybindings
+       ======================================================================== -->
+  <div id="saves-modal" class="em-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="saves-modal-title">
+    <div class="em-modal narrow em-panel">
+      <div class="em-modal-header">
+        <span id="saves-modal-title">
+          <svg class="em-icon"><use href="#icon-save-cart"></use></svg>
+          HYBRID CAMPAIGN RUN SAVES (INDEXEDDB + JSON)
+        </span>
+        <button class="em-btn sm" type="button" data-close-modal="saves-modal">✕ Close</button>
+      </div>
+
+      <div class="em-modal-body">
+        <div class="em-section-box" style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+          <div>
+            <div class="gba-font" style="font-size:12px;font-weight:700;color:#154c3e;" id="active-run-summary-title">
+              Active Run: ---
+            </div>
+            <div id="active-run-summary-sub" style="font-size:11px;color:#55626d;margin-top:2px;">
+              Snapshots automatically sync from Host to every player's IndexedDB so anyone can re-host!
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button id="save-snapshot-now-btn" class="em-btn primary sm" type="button">💾 Save &amp; Sync Now</button>
+            <button id="export-run-json-btn" class="em-btn gold sm" type="button">⬇ Export JSON</button>
+            <button id="import-run-trigger-btn" class="em-btn sm" type="button">📂 Import JSON</button>
+            <button id="reset-new-game-btn" class="em-btn danger sm" type="button">🔄 Reset / New Game</button>
+            <input id="import-run-file" type="file" accept=".json" style="display:none;" />
+          </div>
+          <div id="reset-new-game-confirm" style="display:none;width:100%;padding-top:8px;border-top:1px dashed #d0d7de;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+              <span style="font-size:11px;font-weight:700;color:#9f1239;">
+                Erase current Flash save and start fresh? (IndexedDB snapshots remain untouched unless deleted below.)
+              </span>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                <button id="confirm-reset-title-btn" class="em-btn danger sm" type="button">New Game (Title Screen)</button>
+                <button id="confirm-reset-quick-btn" class="em-btn gold sm" type="button">Quick-Start (Littleroot)</button>
+                <button id="cancel-reset-btn" class="em-btn sm" type="button">Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="em-section-box">
+          <div class="em-section-title">Saved Campaign Runs in Browser IndexedDB</div>
+          <div id="saves-list-container" class="em-list-box">
+            <div style="padding:12px;text-align:center;color:#55626d;">No saved runs found yet.</div>
+          </div>
+        </div>
+
+        <div class="em-section-box">
+          <div class="em-section-title">GBA Controls &amp; Hotkeys</div>
+          <div class="em-toggle-grid gba-font" style="font-size:11px;">
+            <div><strong>D-Pad:</strong> Arrow Keys / WASD</div>
+            <div><strong>A / B:</strong> Z / X (or K / J)</div>
+            <div><strong>L / R:</strong> Q / E (or U / O)</div>
+            <div><strong>Start / Select:</strong> Enter / Shift (or Backspace)</div>
+            <div><strong>Hide / Show HUD:</strong> F2</div>
+            <div><strong>Fullscreen:</strong> F11</div>
+            <div style="grid-column:span 2;"><strong>Gamepad / Controller:</strong> Standard USB/Bluetooth (D-Pad/Stick, A/B, L/R, Start/Select)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================
+       MODAL 4: Late-Joiner Progressed Run Confirmation Modal
+       ======================================================================== -->
+  <div id="late-join-modal" class="em-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="late-join-modal-title">
+    <div class="em-modal narrow em-panel">
+      <div class="em-modal-header">
+        <span id="late-join-modal-title">
+          <svg class="em-icon"><use href="#icon-link-chain"></use></svg>
+          JOIN PROGRESSED SOUL-LINK RUN?
+        </span>
+        <button id="late-join-close-btn" class="em-btn sm" type="button" data-close-modal="late-join-modal">✕ Cancel</button>
+      </div>
+
+      <div class="em-modal-body">
+        <div class="em-section-box late-join-warning-box">
+          <div id="late-join-room-heading" class="gba-font" style="font-size:12px;font-weight:700;color:#154c3e;">
+            Host Run Already In Progress
+          </div>
+          <div id="late-join-progress-summary" style="font-size:12px;margin-top:6px;"></div>
+        </div>
+
+        <div class="em-section-box" style="font-size:12px;line-height:1.45;">
+          <div class="em-section-title">Late-Joiner Sync Rules</div>
+          <ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;">
+            <li>You will start with your own fresh Littleroot starter tutorial (Route 103 May battle, Pokédex, Poké Balls &amp; Running Shoes).</li>
+            <li>Dead or failed routes from Host's run will be <strong>locked</strong> against catching.</li>
+            <li>Earned Badges &amp; Level Caps will sync to your save automatically once you complete your starter tutorial.</li>
+          </ul>
+        </div>
+
+        <div id="late-join-dead-routes-box" class="em-section-box" style="display:none;">
+          <div class="em-section-title">Dead / Locked Routes &amp; Graveyard Snapshot</div>
+          <div id="late-join-dead-routes-list" class="em-list-box" style="max-height:150px;"></div>
+        </div>
+
+        <div style="display:flex;justify-content:flex-end;gap:8px;">
+          <button id="late-join-cancel-btn" class="em-btn sm" type="button">Cancel &amp; Leave</button>
+          <button id="late-join-confirm-btn" class="em-btn primary sm" type="button">✓ Confirm &amp; Join Run</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/relay_config.js"></script>
+  <script src="/net_bridge.js"></script>
+  <script src="/hud_controller.js"></script>
+</body>
+</html>

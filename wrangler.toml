@@ -1,0 +1,15 @@
+name = "emeraldweb"
+main = "cloudflare_worker.js"
+compatibility_date = "2024-11-01"
+workers_dev = true
+
+[assets]
+directory = "./public"
+
+[[durable_objects.bindings]]
+name = "RELAY_HUB"
+class_name = "PokemonRelayHub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["PokemonRelayHub"]
