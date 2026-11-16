@@ -290,6 +290,26 @@ static uint16_t FindPartnerPeerId(uint8_t *outSlot)
     return 0;
 }
 
+static bool CanLocalPlayerDynamax(void)
+{
+    if (!CheckBagHasItem(ITEM_DYNAMAX_BAND, 1))
+        return false;
+    if (B_FLAG_DYNAMAX_BATTLE == 0 || !FlagGet(B_FLAG_DYNAMAX_BATTLE))
+        return false;
+    return true;
+}
+
+static void ApplyDefaultAiGimmickBlock(struct Pokemon *mon)
+{
+    if (mon == NULL)
+        return;
+    if (!CanLocalPlayerDynamax())
+    {
+        u8 dynamaxBlock = BLOCK_AI_DYNAMAX;
+        SetMonData(mon, MON_DATA_DYNAMAX_LEVEL, &dynamaxBlock);
+    }
+}
+
 static void CreateDeterministicRentalMon(struct Pokemon *dst, uint32_t seed, uint32_t slotIdx, u8 level)
 {
     static const enum Species sRentalSpecies[4] = {
@@ -308,6 +328,7 @@ static void CreateDeterministicRentalMon(struct Pokemon *dst, uint32_t seed, uin
     CreateMonWithIVs(dst, sp, level, pers, OTID_STRUCT_PRESET(0x2026u + slotIdx), 16);
     GiveMonInitialMoveset(dst);
     CalculateMonStats(dst);
+    ApplyDefaultAiGimmickBlock(dst);
     MpRandomizer_PopSuppressStatic();
 }
 
@@ -680,6 +701,7 @@ static void PopulateFallbackPartnerOrPvpParty(enum BattleTrainer dstTrainer, uin
             GiveMonInitialMoveset(&dstParty[i]);
             MpBattle2v2_EnsureReliableMove(&dstParty[i]);
             CalculateMonStats(&dstParty[i]);
+            ApplyDefaultAiGimmickBlock(&dstParty[i]);
             MpRandomizer_PopSuppressStatic();
         }
         gPartiesCount[dstTrainer] = CalculatePartyCount(dstTrainer);
@@ -713,6 +735,7 @@ static void PopulateFallbackPartnerOrPvpParty(enum BattleTrainer dstTrainer, uin
             CreateMonWithIVs(&dstParty[count], sp, lvl, pers, OTID_STRUCT_PRESET(0x1337u + i), 16);
             GiveMonInitialMoveset(&dstParty[count]);
             CalculateMonStats(&dstParty[count]);
+            ApplyDefaultAiGimmickBlock(&dstParty[count]);
             MpRandomizer_PopSuppressStatic();
             count++;
         }
@@ -760,6 +783,7 @@ static void PopulateDeterministicEnemyParty(struct Pokemon *dstParty, uint32_t s
         CreateMonWithIVs(&dstParty[i], (enum Species)sp, maxLvl, pers, OTID_STRUCT_PRESET(0x4E50u + i), 14);
         GiveMonInitialMoveset(&dstParty[i]);
         CalculateMonStats(&dstParty[i]);
+        ApplyDefaultAiGimmickBlock(&dstParty[i]);
         MpRandomizer_PopSuppressStatic();
     }
 }
@@ -902,7 +926,21 @@ static void PollBusyTrainerPrompt(void)
 
     explicitPair = MpNet_FindExplicitPairSlot();
     if (explicitPair == 0xFF)
+    {
+        uint32_t seed = (sBattleSession.busyPromptBattleSeed != 0) ? sBattleSession.busyPromptBattleSeed : 0x20260401u;
+        uint8_t prevSlot = sBattleSession.busyPromptPartnerSlot;
+
+        sBattleSession.busyPromptPending = false;
+        sBattleSession.busyPromptChoice = MP_BUSY_PROMPT_UNDECIDED;
+        SeedDeterministicBattleRng(seed);
+        AttachFallbackAiPartnerFlags(&gBattleTypeFlags, seed);
+#ifdef WASM_PLATFORM
+        if (prevSlot < MP_MAX_PLAYERS)
+            WasmMp_NotifyTeammateBusy((int)prevSlot, "not_ready");
+        WasmMp_NotifyBusyPromptResolved();
+#endif
         return;
+    }
 
     coopPartner = MpNet_GetCoopPartnerSlot();
     ps = MpNet_GetPeerState(explicitPair);
@@ -1014,7 +1052,7 @@ void MpBattle2v2_StepFrame(void)
         {
             if (sBattleSession.pendingFromRemote && (launchMode == MP_BATTLE_COOP_2V2 || launchMode == MP_BATTLE_PVP))
                 SendDeclineBusy((targetPeer != 0) ? targetPeer : MP_PEER_BROADCAST, "in_battle");
-            if (!sBattleSession.active)
+            if (!sBattleSession.active && !sBattleSession.busyPromptPending)
                 ResetBattleSessionFields(false);
             else
             {
@@ -1312,6 +1350,7 @@ void MpBattle2v2_EnsureNpcDoubleParty(uint16_t trainerId, struct Pokemon *enemyP
     if (!MpRandomizer_HasFlag(MP_RANDO_F_MOVESETS))
         MpBattle2v2_EnsureReliableMove(&enemyParty[1]);
     CalculateMonStats(&enemyParty[1]);
+    ApplyDefaultAiGimmickBlock(&enemyParty[1]);
     MpRandomizer_PopSuppressStatic();
 }
 
@@ -1732,10 +1771,19 @@ bool MpBattle2v2_ReadyForBattleStart(void)
         shouldFallback = true;
         fallbackReason = "not_ready";
     }
-    else if (sBattleSession.battleStartWaitFrames >= 480u)
+    else if (sBattleSession.battleStartWaitFrames >= 240u)
     {
         shouldFallback = true;
         fallbackReason = "busy";
+    }
+    else if (sBattleSession.battleStartWaitFrames >= 120u)
+    {
+        const char *lateBusyReason = MpOverworld_GetPeerBusyReason(sBattleSession.partnerSlot);
+        if (lateBusyReason != NULL)
+        {
+            shouldFallback = true;
+            fallbackReason = lateBusyReason;
+        }
     }
 
     if (shouldFallback)

@@ -547,6 +547,12 @@ static void ApplyMpTrainerPartyHooks(struct Pokemon *party, u16 trainerId)
             if (newHeld != origHeld)
                 SetMonData(&party[i], MON_DATA_HELD_ITEM, &newHeld);
         }
+
+        if (B_FLAG_DYNAMAX_BATTLE == 0 || !FlagGet(B_FLAG_DYNAMAX_BATTLE) || !CheckBagHasItem(ITEM_DYNAMAX_BAND, 1))
+        {
+            u8 dynamaxBlock = BLOCK_AI_DYNAMAX;
+            SetMonData(&party[i], MON_DATA_DYNAMAX_LEVEL, &dynamaxBlock);
+        }
     }
 }
 

@@ -426,6 +426,40 @@ function createLocalStore(dataDir) {
       getRun(runId) {
         return db.prepare(`SELECT * FROM runs WHERE run_id = ?`).get(runId) || null;
       },
+      userOwnsAnySlotInRun(runId, userId) {
+        return Boolean(
+          db.prepare(`SELECT 1 AS ok FROM run_slots WHERE run_id = ? AND user_id = ? LIMIT 1`).get(runId, userId)
+        );
+      },
+      ensureHostRunForFlash({ runId, auth, body }) {
+        const nowInit = Date.now();
+        const runCfgObj =
+          body.runConfig && typeof body.runConfig === "object" && !Array.isArray(body.runConfig)
+            ? body.runConfig
+            : {};
+        const worldObj =
+          body.worldState && typeof body.worldState === "object" && !Array.isArray(body.worldState)
+            ? body.worldState
+            : {};
+        const initTitle = String(body.title || runCfgObj.roomName || "Hoenn Soul-Link").slice(0, 64);
+        const initSeed = String(body.seed ?? runCfgObj.seed ?? "").slice(0, 31);
+        const initPreset = String(body.randomizerPreset ?? runCfgObj.randomizerPreset ?? "balanced").slice(0, 32);
+        db.prepare(
+          `INSERT INTO runs (run_id, host_user_id, title, seed, randomizer_preset, run_config_json, world_state_json, updated_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          runId,
+          auth.userId,
+          initTitle,
+          initSeed,
+          initPreset,
+          JSON.stringify(runCfgObj),
+          JSON.stringify(worldObj),
+          nowInit,
+          nowInit
+        );
+        return this.getRun(runId);
+      },
       upsertRun({ runId, auth, data }) {
         const existingRun = db.prepare(`SELECT * FROM runs WHERE run_id = ?`).get(runId) || null;
         if (existingRun && existingRun.host_user_id !== auth.userId) {
@@ -506,15 +540,21 @@ function createLocalStore(dataDir) {
             const incomingParty = Array.isArray(su.party) ? su.party.slice(0, 6) : existingParty;
             const incomingTutorial =
               typeof su.tutorialComplete === "boolean" ? su.tutorialComplete : existingTutorial;
+            if (!existingSlot && slotIdx > 0 && !su.userId && incomingParty.length === 0 && !incomingTutorial) {
+              continue;
+            }
             const blockBlankDowngrade =
               !su.force && hasExistingProgress && incomingParty.length === 0 && !incomingTutorial;
 
-            const nextUserId =
-              slotIdx === 0
-                ? auth.userId
-                : su.userId
-                  ? String(su.userId)
-                  : existingSlot?.user_id || null;
+            let nextUserId = existingSlot?.user_id || null;
+            if (slotIdx === 0) {
+              nextUserId = auth.userId;
+            } else if (su.userId) {
+              const candidateUserId = String(su.userId);
+              if (!nextUserId || nextUserId === candidateUserId || su.force || !isUserOnlineInRunRoom(runId, nextUserId, slotIdx)) {
+                nextUserId = candidateUserId;
+              }
+            }
             const nextCharName = String(
               su.characterName ?? su.name ?? existingSlot?.character_name ?? (slotIdx === 0 ? auth.username : "")
             ).slice(0, 24);
@@ -824,6 +864,34 @@ function createLocalStore(dataDir) {
     getRun(runId) {
       return state.runs.find((r) => r.run_id === runId) || null;
     },
+    userOwnsAnySlotInRun(runId, userId) {
+      return state.run_slots.some((s) => s.run_id === runId && s.user_id === userId);
+    },
+    ensureHostRunForFlash({ runId, auth, body }) {
+      const nowInit = Date.now();
+      const runCfgObj =
+        body.runConfig && typeof body.runConfig === "object" && !Array.isArray(body.runConfig)
+          ? body.runConfig
+          : {};
+      const worldObj =
+        body.worldState && typeof body.worldState === "object" && !Array.isArray(body.worldState)
+          ? body.worldState
+          : {};
+      const row = {
+        run_id: runId,
+        host_user_id: auth.userId,
+        title: String(body.title || runCfgObj.roomName || "Hoenn Soul-Link").slice(0, 64),
+        seed: String(body.seed ?? runCfgObj.seed ?? "").slice(0, 31),
+        randomizer_preset: String(body.randomizerPreset ?? runCfgObj.randomizerPreset ?? "balanced").slice(0, 32),
+        run_config_json: JSON.stringify(runCfgObj),
+        world_state_json: JSON.stringify(worldObj),
+        updated_at: nowInit,
+        created_at: nowInit,
+      };
+      state.runs.push(row);
+      persist();
+      return row;
+    },
     upsertRun({ runId, auth, data }) {
       let existingRun = state.runs.find((r) => r.run_id === runId) || null;
       if (existingRun && existingRun.host_user_id !== auth.userId) return { forbidden: true };
@@ -895,9 +963,20 @@ function createLocalStore(dataDir) {
           existingRev > 0 && (existingTutorial || (Array.isArray(existingParty) && existingParty.length > 0));
         const incomingParty = Array.isArray(su.party) ? su.party.slice(0, 6) : existingParty;
         const incomingTutorial = typeof su.tutorialComplete === "boolean" ? su.tutorialComplete : existingTutorial;
+        if (!existingSlot && slotIdx > 0 && !su.userId && incomingParty.length === 0 && !incomingTutorial) {
+          continue;
+        }
         const blockBlankDowngrade = !su.force && hasExistingProgress && incomingParty.length === 0 && !incomingTutorial;
 
-        const nextUserId = slotIdx === 0 ? auth.userId : su.userId ? String(su.userId) : existingSlot?.user_id || null;
+        let nextUserId = existingSlot?.user_id || null;
+        if (slotIdx === 0) {
+          nextUserId = auth.userId;
+        } else if (su.userId) {
+          const candidateUserId = String(su.userId);
+          if (!nextUserId || nextUserId === candidateUserId || su.force || !isUserOnlineInRunRoom(runId, nextUserId, slotIdx)) {
+            nextUserId = candidateUserId;
+          }
+        }
         const nextCharName = String(
           su.characterName ?? su.name ?? existingSlot?.character_name ?? (slotIdx === 0 ? auth.username : "")
         ).slice(0, 24);
@@ -1543,21 +1622,50 @@ async function handleApiRoute(req, res, parsedUrl, pathname) {
       sendJson(res, 400, { ok: false, error: "BAD_REQUEST", message: "Invalid runId or slotIdx." });
       return true;
     }
-    const runRow = store.getRun(runId);
-    if (!runRow) {
-      sendJson(res, 404, { ok: false, error: "RUN_NOT_FOUND", message: "Run not found." });
-      return true;
-    }
+    let runRow = store.getRun(runId);
 
     if (method === "GET") {
-      const slotRow = store.getSlotWithUser(runId, slotIdx);
-      if (!slotRow) {
-        sendJson(res, 404, { ok: false, error: "SLOT_NOT_FOUND", message: "No save data for this slot." });
+      if (!runRow) {
+        sendJson(res, 404, { ok: false, error: "RUN_NOT_FOUND", message: "Run not found." });
         return true;
       }
+      const slotRow = store.getSlotWithUser(runId, slotIdx);
       const isHost = runRow.host_user_id === auth.userId;
-      const isOwner = slotRow.user_id && slotRow.user_id === auth.userId;
+      if (!slotRow) {
+        const ownsAnySlot = store.userOwnsAnySlotInRun(runId, auth.userId);
+        const isOnlinePeer = isUserOnlineInRunRoom(runId, auth.userId, slotIdx);
+        if (!isHost && !ownsAnySlot && !isOnlinePeer) {
+          sendJson(res, 403, { ok: false, error: "FORBIDDEN", message: "You do not have access to this slot." });
+          return true;
+        }
+        const requestedEnc = parsedUrl.searchParams.get("encoding") === "gzip" ? "gzip" : "raw";
+        sendJson(res, 200, {
+          ok: true,
+          flashSaveB64: "",
+          flashEncoding: requestedEnc,
+          flashRev: 0,
+          slotMeta: null,
+        });
+        return true;
+      }
+      const isOwner = Boolean(slotRow.user_id && slotRow.user_id === auth.userId);
       if (!isHost && !isOwner) {
+        const isUnclaimedEmpty =
+          !slotRow.user_id &&
+          Number(slotRow.flash_rev || 0) === 0 &&
+          !slotRow.flash_save_b64 &&
+          isUserOnlineInRunRoom(runId, auth.userId, slotIdx);
+        if (isUnclaimedEmpty) {
+          const requestedEnc = parsedUrl.searchParams.get("encoding") === "gzip" ? "gzip" : "raw";
+          sendJson(res, 200, {
+            ok: true,
+            flashSaveB64: "",
+            flashEncoding: requestedEnc,
+            flashRev: 0,
+            slotMeta: formatSlotMeta(slotRow),
+          });
+          return true;
+        }
         sendJson(res, 403, { ok: false, error: "FORBIDDEN", message: "You do not have access to this slot." });
         return true;
       }
@@ -1581,10 +1689,20 @@ async function handleApiRoute(req, res, parsedUrl, pathname) {
       }
       const body = parsed.data;
       const force = Boolean(body.force);
+      if (!runRow) {
+        if (slotIdx !== 0) {
+          sendJson(res, 404, { ok: false, error: "RUN_NOT_FOUND", message: "Run not found." });
+          return true;
+        }
+        runRow = store.ensureHostRunForFlash({ runId, auth, body });
+      }
       const existingSlot = store.getSlotWithUser(runId, slotIdx);
       const isHost = runRow.host_user_id === auth.userId;
-      const isOwner = existingSlot && existingSlot.user_id === auth.userId;
-      if (!isHost && !isOwner) {
+      const isOwner = Boolean(existingSlot && existingSlot.user_id === auth.userId);
+      const isOnlineUnclaimed = Boolean(
+        (!existingSlot || !existingSlot.user_id) && isUserOnlineInRunRoom(runId, auth.userId, slotIdx)
+      );
+      if (!isHost && !isOwner && !isOnlineUnclaimed) {
         sendJson(res, 403, {
           ok: false,
           error: "FORBIDDEN",

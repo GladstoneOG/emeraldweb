@@ -921,16 +921,24 @@ export class PokemonRelayHub {
           const incomingTutorial =
             typeof su.tutorialComplete === "boolean" ? su.tutorialComplete : existingTutorial;
 
+          // Do not create empty placeholder rows for unoccupied peer slots.
+          if (!existingSlot && slotIdx > 0 && !su.userId && incomingParty.length === 0 && !incomingTutorial) {
+            continue;
+          }
+
           // Never downgrade an established slot back to blank tutorial via metadata upsert unless forced
           const blockBlankDowngrade =
             !su.force && hasExistingProgress && incomingParty.length === 0 && !incomingTutorial;
 
-          const nextUserId =
-            slotIdx === 0
-              ? auth.userId
-              : su.userId
-                ? String(su.userId)
-                : existingSlot?.user_id || null;
+          let nextUserId = existingSlot?.user_id || null;
+          if (slotIdx === 0) {
+            nextUserId = auth.userId;
+          } else if (su.userId) {
+            const candidateUserId = String(su.userId);
+            if (!nextUserId || nextUserId === candidateUserId || su.force || !this.isUserOnlineInRunRoom(runId, nextUserId, slotIdx)) {
+              nextUserId = candidateUserId;
+            }
+          }
           const nextCharName = String(
             su.characterName ?? su.name ?? existingSlot?.character_name ?? (slotIdx === 0 ? auth.username : "")
           ).slice(0, 24);
@@ -1004,12 +1012,12 @@ export class PokemonRelayHub {
         return jsonResponse({ ok: false, error: "BAD_REQUEST", message: "Invalid runId or slotIdx." }, 400);
       }
 
-      const runRow = this.sqlOne(`SELECT * FROM runs WHERE run_id = ?`, runId);
-      if (!runRow) {
-        return jsonResponse({ ok: false, error: "RUN_NOT_FOUND", message: "Run not found." }, 404);
-      }
+      let runRow = this.sqlOne(`SELECT * FROM runs WHERE run_id = ?`, runId);
 
       if (method === "GET") {
+        if (!runRow) {
+          return jsonResponse({ ok: false, error: "RUN_NOT_FOUND", message: "Run not found." }, 404);
+        }
         const slotRow = this.sqlOne(
           `SELECT rs.*, a.username
            FROM run_slots rs
@@ -1018,12 +1026,41 @@ export class PokemonRelayHub {
           runId,
           slotIdx
         );
-        if (!slotRow) {
-          return jsonResponse({ ok: false, error: "SLOT_NOT_FOUND", message: "No save data for this slot." }, 404);
-        }
         const isHost = runRow.host_user_id === auth.userId;
-        const isOwner = slotRow.user_id && slotRow.user_id === auth.userId;
+        if (!slotRow) {
+          const ownsAnySlot = Boolean(
+            this.sqlOne(`SELECT 1 AS ok FROM run_slots WHERE run_id = ? AND user_id = ? LIMIT 1`, runId, auth.userId)
+          );
+          const isOnlinePeer = this.isUserOnlineInRunRoom(runId, auth.userId, slotIdx);
+          if (!isHost && !ownsAnySlot && !isOnlinePeer) {
+            return jsonResponse({ ok: false, error: "FORBIDDEN", message: "You do not have access to this slot." }, 403);
+          }
+          const requestedEnc = url.searchParams.get("encoding") === "gzip" ? "gzip" : "raw";
+          return jsonResponse({
+            ok: true,
+            flashSaveB64: "",
+            flashEncoding: requestedEnc,
+            flashRev: 0,
+            slotMeta: null,
+          });
+        }
+        const isOwner = Boolean(slotRow.user_id && slotRow.user_id === auth.userId);
         if (!isHost && !isOwner) {
+          const isUnclaimedEmpty =
+            !slotRow.user_id &&
+            Number(slotRow.flash_rev || 0) === 0 &&
+            !slotRow.flash_save_b64 &&
+            this.isUserOnlineInRunRoom(runId, auth.userId, slotIdx);
+          if (isUnclaimedEmpty) {
+            const requestedEnc = url.searchParams.get("encoding") === "gzip" ? "gzip" : "raw";
+            return jsonResponse({
+              ok: true,
+              flashSaveB64: "",
+              flashEncoding: requestedEnc,
+              flashRev: 0,
+              slotMeta: formatSlotMeta(slotRow),
+            });
+          }
           return jsonResponse({ ok: false, error: "FORBIDDEN", message: "You do not have access to this slot." }, 403);
         }
 
@@ -1044,14 +1081,50 @@ export class PokemonRelayHub {
         const body = parsed.data;
         const force = Boolean(body.force);
 
+        if (!runRow) {
+          if (slotIdx !== 0) {
+            return jsonResponse({ ok: false, error: "RUN_NOT_FOUND", message: "Run not found." }, 404);
+          }
+          // Auto-create run row when host saves slot 0 before debounced /api/runs/upsert completes.
+          const nowInit = Date.now();
+          const runCfgObj =
+            body.runConfig && typeof body.runConfig === "object" && !Array.isArray(body.runConfig)
+              ? body.runConfig
+              : {};
+          const worldObj =
+            body.worldState && typeof body.worldState === "object" && !Array.isArray(body.worldState)
+              ? body.worldState
+              : {};
+          const initTitle = String(body.title || runCfgObj.roomName || "Hoenn Soul-Link").slice(0, 64);
+          const initSeed = String(body.seed ?? runCfgObj.seed ?? "").slice(0, 31);
+          const initPreset = String(body.randomizerPreset ?? runCfgObj.randomizerPreset ?? "balanced").slice(0, 32);
+          this.sql.exec(
+            `INSERT INTO runs (run_id, host_user_id, title, seed, randomizer_preset, run_config_json, world_state_json, updated_at, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            runId,
+            auth.userId,
+            initTitle,
+            initSeed,
+            initPreset,
+            JSON.stringify(runCfgObj),
+            JSON.stringify(worldObj),
+            nowInit,
+            nowInit
+          );
+          runRow = this.sqlOne(`SELECT * FROM runs WHERE run_id = ?`, runId);
+        }
+
         const existingSlot = this.sqlOne(
           `SELECT * FROM run_slots WHERE run_id = ? AND slot_idx = ?`,
           runId,
           slotIdx
         );
         const isHost = runRow.host_user_id === auth.userId;
-        const isOwner = existingSlot && existingSlot.user_id === auth.userId;
-        if (!isHost && !isOwner) {
+        const isOwner = Boolean(existingSlot && existingSlot.user_id === auth.userId);
+        const isOnlineUnclaimed = Boolean(
+          (!existingSlot || !existingSlot.user_id) && this.isUserOnlineInRunRoom(runId, auth.userId, slotIdx)
+        );
+        if (!isHost && !isOwner && !isOnlineUnclaimed) {
           return jsonResponse(
             { ok: false, error: "FORBIDDEN", message: "Claim this slot or host the run before saving Flash data." },
             403
