@@ -406,7 +406,27 @@ static void CrashScreen(enum Mode mode, const void *return1, const void *return0
         ((vu16 *)VRAM)[i] = TILE0_OFFSET;
     BitUnPack(sGlyphs1BPP, (void *)(VRAM + TILE_OFFSET_4BPP(TILE0_OFFSET)), &sBitUnPack1BPP);
 
+#ifdef WASM_PLATFORM
+    {
+        extern int vsnprintf(char *str, size_t size, const char *format, va_list ap);
+        char formatted[512];
+        va_list vaLog;
+        va_copy(vaLog, va);
+        vsnprintf(formatted, sizeof(formatted), fmt, vaLog);
+        va_end(vaLog);
+        EM_ASM({
+            console.error(($0 ? "[fatalf] " : "[assertf] ") + UTF8ToString($1) +
+                          " (ra0=0x" + ($2 >>> 0).toString(16) +
+                          ", ra1=0x" + ($3 >>> 0).toString(16) + ")");
+        }, (mode == MODE_FATALF) ? 1 : 0, formatted, (unsigned)(uintptr_t)return0, (unsigned)(uintptr_t)return1);
+    }
+#endif
     Vprintf(mode, return1, return0, fmt, va);
+
+#ifdef WASM_PLATFORM
+    if (mode == MODE_FATALF)
+        abort();
+#endif
 
     BusyWaitForVBlank();
     REG_DISPCNT = DISPCNT_MODE_0 | DISPCNT_BG0_ON;

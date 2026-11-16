@@ -2202,3 +2202,57 @@ u32 CountFreePaletteSlots(void)
 
     return count;
 }
+
+#ifdef WASM_PLATFORM
+#include <emscripten.h>
+EMSCRIPTEN_KEEPALIVE u32 mp_debug_sprite_stats(int dumpDetails)
+{
+    u32 i;
+    u32 inUse = 0;
+    u32 tilesUsed = 0;
+    u32 curFreeRun = 0;
+    u32 maxFreeRun = 0;
+    for (i = 0; i < MAX_SPRITES; i++)
+    {
+        if (gSprites[i].inUse)
+            inUse++;
+    }
+    for (i = 0; i < 1024; i++)
+    {
+        if (SPRITE_TILE_IS_ALLOCATED(i))
+        {
+            tilesUsed++;
+            curFreeRun = 0;
+        }
+        else
+        {
+            curFreeRun++;
+            if (curFreeRun > maxFreeRun)
+                maxFreeRun = curFreeRun;
+        }
+    }
+    if (dumpDetails)
+    {
+        EM_ASM({
+            console.log("[SPRITE_STATS] sprites=" + $0 + "/64 tiles=" + $1 + "/1024 maxContigFree=" + $2);
+        }, inUse, tilesUsed, maxFreeRun);
+        for (i = 0; i < MAX_SPRITES; i++)
+        {
+            if (gSprites[i].inUse)
+            {
+                u16 tTag = gSprites[i].template ? gSprites[i].template->tileTag : 0;
+                u16 pTag = gSprites[i].template ? gSprites[i].template->paletteTag : 0;
+                EM_ASM({
+                    console.log("  sp[" + $0 + "] tTag=0x" + ($1).toString(16) +
+                                " pTag=0x" + ($2).toString(16) +
+                                " tile=" + $3 + " sheet=" + $4 + " span=" + $5 +
+                                " sz=" + $6 + " sh=" + $7);
+                }, i, tTag, pTag, gSprites[i].oam.tileNum,
+                   gSprites[i].usingSheet ? 1 : 0, gSprites[i].sheetSpan,
+                   gSprites[i].oam.size, gSprites[i].oam.shape);
+            }
+        }
+    }
+    return (inUse & 0xFFu) | ((tilesUsed & 0xFFFu) << 8) | ((maxFreeRun & 0xFFFu) << 20);
+}
+#endif
