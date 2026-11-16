@@ -320,6 +320,16 @@
       </div>
 
       <div class="bar-group">
+        <span id="account-user-badge" class="em-badge ok" style="display:none;" title="Signed-in Account">
+          @trainer
+        </span>
+        <button id="open-auth-btn" class="em-btn dark-ghost sm" type="button" title="Sign In or Register Account to Sync Multiplayer Saves">
+          🔑 Sign In
+        </button>
+        <button id="account-logout-btn" class="em-btn dark-ghost sm" type="button" style="display:none;" title="Log Out">
+          Logout
+        </button>
+
         <label for="player-name-input" class="gba-font" style="font-size:11px;color:#a9d9c8;">TRAINER:</label>
         <input
           id="player-name-input"
@@ -576,8 +586,11 @@
             </div>
 
             <div class="em-section-box">
-              <div class="em-section-title">Run Resume Picker (IndexedDB)</div>
-              <div id="resume-runs-list" class="em-list-box" style="max-height:130px;">
+              <div class="em-section-title" style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+                <span>Saved Runs &amp; Resume Picker</span>
+                <button id="rooms-refresh-saves-btn" class="em-btn sm" type="button" style="padding:1px 6px;font-size:9px;">↻ Sync</button>
+              </div>
+              <div id="resume-runs-list" class="em-list-box" style="max-height:175px;">
                 <div style="padding:10px;text-align:center;color:#55626d;">No saved runs yet.</div>
               </div>
             </div>
@@ -595,7 +608,7 @@
                 <div style="display:flex;gap:6px;align-items:center;">
                   <div style="flex:1;">
                     <label style="font-size:11px;font-weight:700;display:block;margin-bottom:2px;">Campaign Seed</label>
-                    <input id="setup-seed-input" class="em-input" style="width:100%;" type="text" maxlength="24" />
+                    <input id="setup-seed-input" class="em-input" style="width:100%;" type="text" maxlength="31" />
                   </div>
                   <button id="randomize-seed-btn" class="em-btn gold sm" type="button" style="margin-top:16px;">🎲 Roll</button>
                 </div>
@@ -617,7 +630,7 @@
                   <span>Auto-pull Co-op Partner into 2v2 Multi-Battles</span>
                 </label>
                 <label class="em-check" style="margin-top:2px;">
-                  <input id="setup-fresh-reset" type="checkbox" />
+                  <input id="setup-fresh-reset" type="checkbox" checked />
                   <span>Erase local Flash save &amp; start fresh New Game</span>
                 </label>
               </div>
@@ -820,9 +833,19 @@
           </div>
         </div>
 
+        <div id="saves-auth-banner" class="em-section-box saves-auth-banner" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+          <div id="saves-auth-status-text" style="font-size:12px;color:#154c3e;">
+            Sign in to sync Hosted &amp; Joined multiplayer runs to your account across browsers &amp; cache clears.
+          </div>
+          <div style="display:flex;gap:6px;">
+            <button id="saves-open-auth-btn" class="em-btn primary sm" type="button">🔑 Sign In / Register</button>
+            <button id="saves-refresh-cloud-btn" class="em-btn sm" type="button">↻ Refresh Cloud Runs</button>
+          </div>
+        </div>
+
         <div class="em-section-box">
-          <div class="em-section-title">Saved Campaign Runs in Browser IndexedDB</div>
-          <div id="saves-list-container" class="em-list-box">
+          <div class="em-section-title">Campaign Runs (Hosted • Joined • Solo)</div>
+          <div id="saves-list-container" class="em-list-box" style="max-height:300px;">
             <div style="padding:12px;text-align:center;color:#55626d;">No saved runs found yet.</div>
           </div>
         </div>
@@ -881,6 +904,85 @@
         <div style="display:flex;justify-content:flex-end;gap:8px;">
           <button id="late-join-cancel-btn" class="em-btn sm" type="button">Cancel &amp; Leave</button>
           <button id="late-join-confirm-btn" class="em-btn primary sm" type="button">✓ Confirm &amp; Join Run</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================
+       MODAL 5: Account Login / Register Modal
+       ======================================================================== -->
+  <div id="auth-modal" class="em-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+    <div class="em-modal narrow em-panel" style="max-width:440px;">
+      <div class="em-modal-header">
+        <span id="auth-modal-title">🔑 TRAINER ACCOUNT (CLOUD SAVE SYNC)</span>
+        <button class="em-btn sm" type="button" data-close-modal="auth-modal">✕ Close</button>
+      </div>
+
+      <div class="em-modal-tabs">
+        <button class="em-modal-tab active" type="button" data-auth-tab="login">Sign In</button>
+        <button class="em-modal-tab" type="button" data-auth-tab="register">Create Account</button>
+      </div>
+
+      <form id="auth-form" class="em-modal-body" autocomplete="on">
+        <div id="auth-error-box" class="em-section-box rooms-join-error" style="display:none;">
+          <strong class="gba-font" style="font-size:11px;color:#9f1239;">AUTH ERROR:</strong>
+          <span id="auth-error-text" style="font-size:12px;"></span>
+        </div>
+
+        <div class="em-section-box" style="display:flex;flex-direction:column;gap:8px;">
+          <div>
+            <label for="auth-username-input" style="font-size:11px;font-weight:700;display:block;margin-bottom:3px;">Username</label>
+            <input id="auth-username-input" class="em-input" style="width:100%;" type="text" minlength="2" maxlength="24" autocomplete="username" placeholder="e.g. Brendan99" required />
+          </div>
+          <div>
+            <label for="auth-password-input" style="font-size:11px;font-weight:700;display:block;margin-bottom:3px;">Password</label>
+            <input id="auth-password-input" class="em-input" style="width:100%;" type="password" minlength="4" maxlength="128" autocomplete="current-password" placeholder="At least 4 characters" required />
+          </div>
+          <div style="font-size:11px;color:#55626d;line-height:1.4;">
+            Your account links your Trainer Slot &amp; GBA Flash save to each Hosted or Joined run so refreshing or switching browsers never resets your team.
+          </div>
+        </div>
+
+        <div style="display:flex;justify-content:flex-end;gap:8px;">
+          <button class="em-btn sm" type="button" data-close-modal="auth-modal">Cancel</button>
+          <button id="auth-submit-btn" class="em-btn primary" type="submit">Sign In</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ========================================================================
+       MODAL 6: Explicit Offline Slot Claim Modal (When New Identity Joins Existing Run)
+       ======================================================================== -->
+  <div id="slot-claim-modal" class="em-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="slot-claim-modal-title">
+    <div class="em-modal narrow em-panel">
+      <div class="em-modal-header">
+        <span id="slot-claim-modal-title">
+          <svg class="em-icon"><use href="#icon-save-cart"></use></svg>
+          CLAIM OFFLINE TRAINER SLOT OR JOIN NEW?
+        </span>
+        <button id="slot-claim-close-btn" class="em-btn sm" type="button" data-close-modal="slot-claim-modal">✕ Cancel</button>
+      </div>
+
+      <div class="em-modal-body">
+        <div class="em-section-box late-join-warning-box">
+          <div id="slot-claim-heading" class="gba-font" style="font-size:12px;font-weight:700;color:#154c3e;">
+            Existing Trainer Slots Found in This Run
+          </div>
+          <div style="font-size:12px;margin-top:4px;">
+            Your current account/session does not yet match any slot in this room. Pick an offline slot below to resume its Trainer &amp; Flash save, or join as a brand-new player.
+          </div>
+        </div>
+
+        <div class="em-section-box">
+          <div class="em-section-title">Offline Trainer Slots Available to Claim</div>
+          <div id="slot-claim-list" class="em-list-box" style="max-height:220px;"></div>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+          <button id="slot-claim-cancel-btn" class="em-btn sm" type="button">Cancel &amp; Leave</button>
+          <button id="slot-claim-new-btn" class="em-btn gold sm" type="button">➕ Join as New Player (Fresh Slot)</button>
         </div>
       </div>
     </div>

@@ -230,6 +230,8 @@ typedef struct MP_PACKED MpBattleStartPayload {
     uint16_t trainerId;
     uint16_t species[2];
     uint8_t levels[2];
+    uint64_t seedHash;
+    uint32_t randomizerFlags;
 } MpBattleStartPayload;
 
 typedef struct MP_PACKED MpBattleTurnActionPayload {

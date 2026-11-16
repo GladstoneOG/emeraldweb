@@ -47,6 +47,7 @@
 #include "union_room.h"
 #include "dexnav.h"
 #include "wild_encounter.h"
+#include "mp/mp_overworld.h"
 #include "constants/battle_frontier.h"
 #include "constants/rgb.h"
 #include "constants/songs.h"
@@ -1152,6 +1153,9 @@ static u8 SaveDoSaveCallback(void)
     IncrementGameStat(GAME_STAT_SAVED_GAME);
     PausePyramidChallenge();
 
+    /* Strip transient remote peer object events before writing SaveBlock1 to Flash. */
+    MpOverworld_ClearRemoteSprites();
+
     if (gDifferentSaveFile == TRUE)
     {
         saveStatus = TrySavingData(SAVE_OVERWRITE_DIFFERENT_FILE);
@@ -1163,9 +1167,14 @@ static u8 SaveDoSaveCallback(void)
     }
 
     if (saveStatus == SAVE_STATUS_OK)
+    {
+        MpOverworld_NotifyFlashSaved();
         ShowSaveMessage(gText_PlayerSavedGame, SaveSuccessCallback);
+    }
     else
+    {
         ShowSaveMessage(gText_SaveError, SaveErrorCallback);
+    }
 
     SaveStartTimer();
     return SAVE_IN_PROGRESS;

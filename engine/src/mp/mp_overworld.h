@@ -22,6 +22,9 @@ void MpOverworld_InteractWithRemotePlayer(uint8_t peerSlot);
 /** Immediately save current overworld progress into GBA Flash (synced to localStorage). */
 bool MpOverworld_SaveGameNow(void);
 
+/** Notify JS/Host/Server that GBA Flash was written (used by both auto-save and manual Start Menu save). */
+void MpOverworld_NotifyFlashSaved(void);
+
 /** Load an existing GBA Flash save directly into the world, or bootstrap Littleroot Town if none exists. */
 void MpOverworld_ResumeOrBootstrapFromSave(void);
 

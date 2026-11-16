@@ -13,6 +13,40 @@ static const struct FlashSetupInfo *const sSetupInfos[] =
     &DefaultFlash
 };
 
+#ifdef WASM_PLATFORM
+static u16 ProgramFlashByte_Wasm(u16 sectorNum, u32 offset, u8 data)
+{
+    if (gFlash && sectorNum >= gFlash->sector.count)
+        return 0x80FF;
+    if (gFlash && offset >= gFlash->sector.size)
+        return 0x8000;
+
+    SwitchFlashBank(sectorNum / SECTORS_PER_BANK);
+    sectorNum %= SECTORS_PER_BANK;
+    return WasmFlash_ProgramByte(sectorNum, offset, data);
+}
+
+static u16 ProgramFlashSector_Wasm(u16 sectorNum, u8 *src)
+{
+    if (gFlash && sectorNum >= gFlash->sector.count)
+        return 0x80FF;
+
+    SwitchFlashBank(sectorNum / SECTORS_PER_BANK);
+    sectorNum %= SECTORS_PER_BANK;
+    return WasmFlash_ProgramSector(sectorNum, src);
+}
+
+static u16 EraseFlashSector_Wasm(u16 sectorNum)
+{
+    if (gFlash && sectorNum >= gFlash->sector.count)
+        return 0x80FF;
+
+    SwitchFlashBank(sectorNum / SECTORS_PER_BANK);
+    sectorNum %= SECTORS_PER_BANK;
+    return WasmFlash_EraseSector(sectorNum);
+}
+#endif
+
 u16 IdentifyFlash(void)
 {
     u16 result;
@@ -41,10 +75,10 @@ u16 IdentifyFlash(void)
     }
 
 #ifdef WASM_PLATFORM
-    ProgramFlashByte = WasmFlash_ProgramByte;
-    ProgramFlashSector = WasmFlash_ProgramSector;
+    ProgramFlashByte = ProgramFlashByte_Wasm;
+    ProgramFlashSector = ProgramFlashSector_Wasm;
     EraseFlashChip = WasmFlash_EraseChip;
-    EraseFlashSector = WasmFlash_EraseSector;
+    EraseFlashSector = EraseFlashSector_Wasm;
 #else
     ProgramFlashByte = (*setupInfo)->programFlashByte;
     ProgramFlashSector = (*setupInfo)->programFlashSector;
