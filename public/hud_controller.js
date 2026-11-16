@@ -210,7 +210,10 @@
       });
       return false;
     }
-    PokemonNet.joinRoom(numPort, { confirmedProgressed: isReturning });
+    PokemonNet.joinRoom(numPort, {
+      confirmedProgressed: isReturning,
+      runId: (room && room.run_id) || "",
+    });
     closeModal("rooms-modal");
     return true;
   }
@@ -1785,16 +1788,35 @@
           : null;
 
       if (preloadedWasm) {
-        const wasmProbe = await fetch("/index.wasm", { method: "HEAD", cache: "no-cache" }).catch(() => null);
-        if (wasmProbe && wasmProbe.ok) {
-          const liveType = (wasmProbe.headers.get("content-type") || "").toLowerCase();
-          const liveLen = Number(wasmProbe.headers.get("content-length") || 0);
-          const isWasmLike = !liveType.includes("json") && !liveType.includes("text/");
-          if (isWasmLike && liveLen > 0 && liveLen !== preloadedWasm.byteLength) {
-            console.warn(
-              `Preloaded chunked index.wasm size mismatch (${preloadedWasm.byteLength} vs live ${liveLen}); using live /index.wasm`
-            );
-            preloadedWasm = null;
+        let verifiedByManifest = false;
+        try {
+          const manifestRes = await fetch("/chunks/index.wasm.manifest.json", { cache: "no-cache" }).catch(() => null);
+          if (manifestRes && manifestRes.ok) {
+            const mJson = await manifestRes.json().catch(() => null);
+            const expectedBytes = Number(mJson && mJson.totalBytes);
+            if (expectedBytes > 0) {
+              verifiedByManifest = true;
+              if (expectedBytes !== preloadedWasm.byteLength) {
+                console.warn(
+                  `Preloaded chunked index.wasm size mismatch (${preloadedWasm.byteLength} vs manifest ${expectedBytes}); refreshing`
+                );
+                preloadedWasm = null;
+              }
+            }
+          }
+        } catch (_) {}
+        if (!verifiedByManifest && preloadedWasm) {
+          const wasmProbe = await fetch("/index.wasm", { method: "HEAD", cache: "no-cache" }).catch(() => null);
+          if (wasmProbe && wasmProbe.ok) {
+            const liveType = (wasmProbe.headers.get("content-type") || "").toLowerCase();
+            const liveLen = Number(wasmProbe.headers.get("content-length") || 0);
+            const isWasmLike = !liveType.includes("json") && !liveType.includes("text/");
+            if (isWasmLike && liveLen > 0 && liveLen !== preloadedWasm.byteLength) {
+              console.warn(
+                `Preloaded chunked index.wasm size mismatch (${preloadedWasm.byteLength} vs live ${liveLen}); using live /index.wasm`
+              );
+              preloadedWasm = null;
+            }
           }
         }
       }

@@ -7,6 +7,12 @@
 #include "m4a.h"
 #include "constants/characters.h"
 #include "constants/rgb.h"
+#ifdef WASM_PLATFORM
+#include "wasm_platform.h"
+#endif
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 enum Mode { MODE_ASSERTF, MODE_FATALF };
 #define MODE_COUNT 2
@@ -311,10 +317,14 @@ static void Vprintf(enum Mode mode, const void *return1, const void *return0, co
 
 static void BusyWaitForVBlank(void)
 {
+#ifdef WASM_PLATFORM
+    WasmPlatform_VBlankYield();
+#else
     // Interrupts are disabled so we have to busy loop to wait for
     // v-blanks.
     while (REG_VCOUNT < 160)
         ;
+#endif
 }
 
 struct Backup
@@ -333,6 +343,17 @@ struct Backup
  * hijacks the main loop until the start button is pressed. */
 static void CrashScreen(enum Mode mode, const void *return1, const void *return0, const char *fmt, va_list va)
 {
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+        var msg = $1 ? UTF8ToString($1) : "(null)";
+        console.error(($0 ? "[fatalf] " : "[assertf] ") + msg);
+    }, (int)(mode == MODE_FATALF), fmt);
+#endif
+#ifdef WASM_PLATFORM
+    if (mode == MODE_ASSERTF)
+        return;
+#endif
+
     // Backup and override hardware state.
     struct Backup *backup = NULL;
 
