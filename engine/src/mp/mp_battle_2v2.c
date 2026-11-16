@@ -913,9 +913,51 @@ static void LaunchCoop2v2SessionFromTrainer(uint32_t seed, uint16_t trainerId,
     SendBattleStartPacket(MP_BATTLE_COOP_2V2, seed, trainerId, opponentB, twoOpponents, partnerPeer);
 }
 
+static uint8_t FindCoopTargetSlot(void)
+{
+    uint8_t local = MpNet_GetLocalSlot();
+    const MpPeerState *localPeer = (local < MP_MAX_PLAYERS) ? MpNet_GetPeerState(local) : NULL;
+    uint8_t localTag = (localPeer != NULL) ? localPeer->partyPairTag : 0u;
+    uint8_t explicitPair = MpNet_FindExplicitPairSlot();
+    const MpRunConfig *cfg;
+    uint8_t coopPartner;
+
+    if (explicitPair != 0xFFu)
+        return explicitPair;
+    if (localTag != 0u)
+        return 0xFFu;
+
+    coopPartner = MpNet_GetCoopPartnerSlot();
+    if (coopPartner != 0xFFu)
+        return coopPartner;
+
+    /* When partyPairTag == 0 (default room state), include default unpaired co-op
+     * partner even while in_tutorial or not_ready so Wait/AI prompt still triggers. */
+    cfg = MpNet_GetRunConfig();
+    if (cfg != NULL && cfg->soulLinkMode == MP_SOULLINK_PAIRS)
+    {
+        uint8_t paired = local ^ 1u;
+        if (paired < MP_MAX_PLAYERS)
+        {
+            const MpPeerState *ps = MpNet_GetPeerState(paired);
+            if (ps != NULL && ps->connected && ps->partyPairTag == 0u)
+                return paired;
+        }
+    }
+
+    for (uint8_t i = 0; i < MP_MAX_PLAYERS; i++)
+    {
+        const MpPeerState *ps = MpNet_GetPeerState(i);
+        if (i != local && ps != NULL && ps->connected && ps->partyPairTag == 0u)
+            return i;
+    }
+
+    return 0xFFu;
+}
+
 static void PollBusyTrainerPrompt(void)
 {
-    uint8_t explicitPair;
+    uint8_t targetPartner;
     uint8_t coopPartner;
     const MpPeerState *ps;
     const char *busyReason;
@@ -924,8 +966,8 @@ static void PollBusyTrainerPrompt(void)
     if (!sBattleSession.busyPromptPending)
         return;
 
-    explicitPair = MpNet_FindExplicitPairSlot();
-    if (explicitPair == 0xFF)
+    targetPartner = FindCoopTargetSlot();
+    if (targetPartner == 0xFF)
     {
         uint32_t seed = (sBattleSession.busyPromptBattleSeed != 0) ? sBattleSession.busyPromptBattleSeed : 0x20260401u;
         uint8_t prevSlot = sBattleSession.busyPromptPartnerSlot;
@@ -943,11 +985,11 @@ static void PollBusyTrainerPrompt(void)
     }
 
     coopPartner = MpNet_GetCoopPartnerSlot();
-    ps = MpNet_GetPeerState(explicitPair);
-    busyReason = MpOverworld_GetPeerBusyReason(explicitPair);
+    ps = MpNet_GetPeerState(targetPartner);
+    busyReason = MpOverworld_GetPeerBusyReason(targetPartner);
     partnerPeer = (ps != NULL && ps->connected) ? ps->peerId : 0;
 
-    if (busyReason == NULL && coopPartner == explicitPair && partnerPeer != 0)
+    if (busyReason == NULL && coopPartner == targetPartner && partnerPeer != 0)
     {
         uint32_t seed = (sBattleSession.busyPromptBattleSeed != 0) ? sBattleSession.busyPromptBattleSeed : 0x20260401u;
         uint16_t trainerId = sBattleSession.busyPromptTrainerId;
@@ -1222,7 +1264,7 @@ bool MpBattle2v2_ShouldForceWildDouble(void)
 
 void MpBattle2v2_ConfigureTrainerBattleFlags(uint16_t trainerId, uint32_t *battleTypeFlags)
 {
-    uint8_t explicitPair;
+    uint8_t targetPartner;
     uint8_t coopPartner;
     uint16_t partnerPeer = 0;
 
@@ -1250,19 +1292,19 @@ void MpBattle2v2_ConfigureTrainerBattleFlags(uint16_t trainerId, uint32_t *battl
     if (*battleTypeFlags & BATTLE_TYPE_INGAME_PARTNER)
         return;
 
-    explicitPair = MpNet_FindExplicitPairSlot();
+    targetPartner = FindCoopTargetSlot();
     coopPartner = MpNet_GetCoopPartnerSlot();
 
-    if (explicitPair != 0xFF)
+    if (targetPartner != 0xFF)
     {
-        const MpPeerState *ps = MpNet_GetPeerState(explicitPair);
-        const char *busyReason = MpOverworld_GetPeerBusyReason(explicitPair);
+        const MpPeerState *ps = MpNet_GetPeerState(targetPartner);
+        const char *busyReason = MpOverworld_GetPeerBusyReason(targetPartner);
         uint32_t seed = (uint32_t)(MpRand_SplitMix64(MpRandomizer_GetRunSeed(), 0x32563243u, trainerId) & 0xFFFFFFFFu);
 
         if (ps != NULL)
             partnerPeer = ps->peerId;
 
-        if (busyReason != NULL || coopPartner != explicitPair || partnerPeer == 0)
+        if (busyReason != NULL || coopPartner != targetPartner || partnerPeer == 0)
         {
 #ifdef WASM_PLATFORM
             const char *promptReason = (busyReason != NULL) ? busyReason : ((partnerPeer == 0) ? "not_ready" : "busy");
@@ -1273,7 +1315,7 @@ void MpBattle2v2_ConfigureTrainerBattleFlags(uint16_t trainerId, uint32_t *battl
             sBattleSession.battleSeed = seed;
             sBattleSession.busyPromptPending = true;
             sBattleSession.busyPromptChoice = MP_BUSY_PROMPT_UNDECIDED;
-            sBattleSession.busyPromptPartnerSlot = explicitPair;
+            sBattleSession.busyPromptPartnerSlot = targetPartner;
             sBattleSession.busyPromptTrainerId = trainerId;
             sBattleSession.busyPromptTwoOpponents = twoOpponents;
             sBattleSession.busyPromptOpponentB = opponentB;
@@ -1281,7 +1323,7 @@ void MpBattle2v2_ConfigureTrainerBattleFlags(uint16_t trainerId, uint32_t *battl
                 TRAINER_BATTLE_PARAM.opponentB = 0xFFFF;
             sBattleSession.busyPromptBattleSeed = seed;
             SeedDeterministicBattleRng(seed);
-            WasmMp_PromptTeammateBusy((int)explicitPair, promptReason);
+            WasmMp_PromptTeammateBusy((int)targetPartner, promptReason);
             return;
 #else
             SeedDeterministicBattleRng(seed);
