@@ -1353,6 +1353,30 @@ body.sidebar-collapsed #soul-link-sidebar {
   box-shadow: 0 0 0 2px var(--em-mint);
 }
 
+/* Auth Gate Overlay (blocks gameplay until signed in) */
+#auth-gate-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(5, 14, 11, 0.72);
+  backdrop-filter: blur(2px);
+}
+
+#auth-gate-overlay.hidden {
+  display: none;
+}
+
+.auth-gate-card {
+  max-width: 390px;
+  width: 100%;
+  padding: 18px 20px;
+  text-align: center;
+}
+
 /* Loading Screen */
 #loading-overlay {
   position: fixed;

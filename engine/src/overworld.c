@@ -2438,6 +2438,7 @@ static bool32 ReturnToFieldLocal(u8 *state)
     case 3:
 #ifdef WASM_PLATFORM
         MpOverworld_OnMapLoad();
+        TrySpawnObjectEvents(0, 0);
 #endif
         return TRUE;
     }

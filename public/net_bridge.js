@@ -407,12 +407,27 @@
   }
 
   function getOrCreatePlayerName() {
-    let name = localStorage.getItem(STORAGE_KEYS.playerName);
-    if (!name) {
-      name = "May" + Math.floor(100 + Math.random() * 899);
-      localStorage.setItem(STORAGE_KEYS.playerName, name);
+    if (
+      typeof client !== "undefined" &&
+      client &&
+      client.state &&
+      client.state.auth &&
+      client.state.auth.status === "signed_in" &&
+      client.state.auth.username
+    ) {
+      const authName = String(client.state.auth.username).trim().slice(0, 20);
+      if (authName) {
+        try {
+          localStorage.setItem(STORAGE_KEYS.playerName, authName);
+        } catch (_) {}
+        return authName;
+      }
     }
-    return name;
+    let name = "";
+    try {
+      name = localStorage.getItem(STORAGE_KEYS.playerName) || "";
+    } catch (_) {}
+    return name || "Trainer";
   }
 
   // --- Relay URL Configuration (Compatible with brotatoweb & /relay_config.js) ---
@@ -549,16 +564,39 @@
       });
     }
     if (msg.t === "world_sync") {
+      const worldObj = msg.world && typeof msg.world === "object" ? msg.world : msg;
       const badges = Array.isArray(msg.badges)
         ? msg.badges
-        : msg.world && Array.isArray(msg.world.badges)
-          ? msg.world.badges
+        : Array.isArray(worldObj.badges)
+          ? worldObj.badges
           : null;
-      if (badges) {
-        return encodeJsonPayload({
-          t: "world_sync",
-          badges: badges.slice(0, 8).map(Boolean),
-        });
+      const rawFlags = worldObj.globalFlags && typeof worldObj.globalFlags === "object" ? worldObj.globalFlags : {};
+      const rawVars = worldObj.globalVars && typeof worldObj.globalVars === "object" ? worldObj.globalVars : {};
+      const flags = [];
+      for (const [k, v] of Object.entries(rawFlags)) {
+        const id = Number(k);
+        if (Number.isInteger(id) && id > 0 && v) flags.push([id, 1]);
+      }
+      const vars = [];
+      for (const [k, v] of Object.entries(rawVars)) {
+        const id = Number(k);
+        const val = Number(v);
+        if (Number.isInteger(id) && id > 0 && Number.isFinite(val) && val > 0) {
+          vars.push([id, Math.floor(val)]);
+        }
+      }
+      if (badges || flags.length > 0 || vars.length > 0) {
+        const out = { t: "world_sync" };
+        if (badges) out.badges = badges.slice(0, 8).map(Boolean);
+        if (flags.length > 0) out.flags = flags;
+        if (vars.length > 0) out.vars = vars;
+        let bytes = encodeJsonPayload(out);
+        while (bytes.byteLength > 1900 && (out.flags && out.flags.length > 0 || out.vars && out.vars.length > 0)) {
+          if (out.vars && out.vars.length > 0) out.vars.pop();
+          else if (out.flags && out.flags.length > 0) out.flags.pop();
+          bytes = encodeJsonPayload(out);
+        }
+        return bytes;
       }
     }
     return rawBytes || encodeJsonPayload(msg);
@@ -1172,6 +1210,52 @@
       this._inFlightUpserts = new Map();
     }
 
+    isSignedIn() {
+      return Boolean(
+        this.state.auth &&
+          this.state.auth.status === "signed_in" &&
+          this.state.auth.userId &&
+          this.state.auth.username
+      );
+    }
+
+    _syncAccountTrainerName() {
+      if (!this.isSignedIn()) return;
+      const cleanName = String(this.state.auth.username || "").trim().slice(0, 20) || "Trainer";
+      try {
+        localStorage.setItem(STORAGE_KEYS.playerName, cleanName);
+      } catch (_) {}
+      const myIdx = this.state.connection ? Number(this.state.connection.mySlotIndex) || 0 : 0;
+      const mySlot = this.state.players[myIdx];
+      if (mySlot) {
+        mySlot.userId = this.state.auth.userId;
+        mySlot.username = this.state.auth.username;
+        mySlot.name = cleanName;
+      }
+      if (this.state.runConfig) {
+        const rn = String(this.state.runConfig.roomName || "").trim();
+        if (!rn || /^(Trainer|Guest|May\d+)'s Hoenn Run$/i.test(rn)) {
+          this.state.runConfig.roomName = `${cleanName}'s Hoenn Run`;
+        }
+      }
+      if (global.PokemonWasmBridge && typeof global.PokemonWasmBridge._syncPeersToWasm === "function") {
+        global.PokemonWasmBridge._syncPeersToWasm(this.state.players);
+      }
+    }
+
+    _handleSignedInFlashIsolation(userId) {
+      const meta = readFlashSaveMeta();
+      if (hasValidWasmFlashSave() && meta.userId && meta.userId !== "guest" && meta.userId !== userId) {
+        clearLocalFlashSave();
+        if (
+          global.PokemonWasmBridge &&
+          typeof global.PokemonWasmBridge._returnToTitleScreenInWasm === "function"
+        ) {
+          global.PokemonWasmBridge._returnToTitleScreenInWasm({ autosave: false });
+        }
+      }
+    }
+
     _getEffectiveUserId() {
       return (this.state.auth && this.state.auth.userId) || "guest";
     }
@@ -1225,12 +1309,10 @@
             username: String(res.data.username || ""),
             sessionToken: tok,
           };
-          const mySlot = this.state.players[this.state.connection.mySlotIndex];
-          if (mySlot) {
-            mySlot.userId = this.state.auth.userId;
-            mySlot.username = this.state.auth.username;
-          }
+          this._syncAccountTrainerName();
+          this._handleSignedInFlashIsolation(this.state.auth.userId);
           this.emit("auth");
+          this.emit("players");
           await this.refreshCloudRuns();
           return true;
         }
@@ -1269,12 +1351,10 @@
         username: String(cleanName || username || ""),
         sessionToken: String(sessionToken),
       };
-      const mySlot = this.state.players[this.state.connection.mySlotIndex];
-      if (mySlot) {
-        mySlot.userId = this.state.auth.userId;
-        mySlot.username = this.state.auth.username;
-      }
+      this._syncAccountTrainerName();
+      this._handleSignedInFlashIsolation(this.state.auth.userId);
       this.emit("auth");
+      this.emit("players");
       await this.refreshCloudRuns();
       return { ok: true, userId: this.state.auth.userId, username: this.state.auth.username };
     }
@@ -1297,32 +1377,91 @@
         username: String(cleanName || username || ""),
         sessionToken: String(sessionToken),
       };
-      const mySlot = this.state.players[this.state.connection.mySlotIndex];
-      if (mySlot) {
-        mySlot.userId = this.state.auth.userId;
-        mySlot.username = this.state.auth.username;
-      }
+      this._syncAccountTrainerName();
+      this._handleSignedInFlashIsolation(this.state.auth.userId);
       this.emit("auth");
+      this.emit("players");
       await this.refreshCloudRuns();
       return { ok: true, userId: this.state.auth.userId, username: this.state.auth.username };
     }
 
     async logoutAccount() {
+      if (this._wasmResumeTimer) {
+        clearTimeout(this._wasmResumeTimer);
+        this._wasmResumeTimer = null;
+      }
+      this._pendingWasmResume = false;
+      this._pendingWasmResetMode = "";
+      if (global.PokemonWasmBridge && typeof global.PokemonWasmBridge.setInputMask === "function") {
+        global.PokemonWasmBridge.setInputMask(0, "gamepad");
+        global.PokemonWasmBridge.setKeyboardMask(0);
+      }
+      // Autosave gameplay & return WASM to Title Screen while auth token is still valid.
+      let didSaveWasm = false;
+      if (
+        global.PokemonWasmBridge &&
+        typeof global.PokemonWasmBridge._returnToTitleScreenInWasm === "function"
+      ) {
+        didSaveWasm = global.PokemonWasmBridge._returnToTitleScreenInWasm({ autosave: true });
+      } else if (global.PokemonWasmBridge && typeof global.PokemonWasmBridge._saveGameInWasm === "function") {
+        didSaveWasm = global.PokemonWasmBridge._saveGameInWasm();
+      }
+      if (this.isSignedIn() && (didSaveWasm || hasValidWasmFlashSave())) {
+        try {
+          await this.saveRunSnapshotToDb(undefined, { silentBroadcast: true, skipWasmSave: true });
+          const myRunId = (this.state.runConfig && this.state.runConfig.runId) || "";
+          const myIdx = this.state.connection ? Number(this.state.connection.mySlotIndex) || 0 : 0;
+          const mySlot = this.state.players[myIdx];
+          const b64 = exportWasmFlashBase64();
+          if (myRunId && b64) {
+            await this.cacheSlotFlashLocal(
+              myRunId,
+              myIdx,
+              b64,
+              (mySlot && mySlot.flashRev) || 0,
+              Date.now()
+            );
+            if (this.isHost()) {
+              await this.syncRunUpsertToBackend().catch(() => null);
+            }
+            await this.syncSlotFlashToBackend(
+              myRunId,
+              myIdx,
+              b64,
+              (mySlot && mySlot.flashRev) || 0,
+              mySlot
+            ).catch(() => null);
+          }
+        } catch (_) {}
+      }
+      this.disconnect();
       if (this.state.auth && this.state.auth.sessionToken) {
-        await this._apiFetch("/api/auth/logout", { method: "POST" });
+        await this._apiFetch("/api/auth/logout", { method: "POST" }).catch(() => {});
       }
       try {
         localStorage.removeItem(STORAGE_KEYS.sessionToken);
+        localStorage.removeItem(STORAGE_KEYS.playerName);
       } catch (_) {}
+      clearLocalFlashSave();
       this.state.auth = { status: "signed_out", userId: "", username: "", sessionToken: "" };
       this.cloudRuns = { hostedRuns: [], joinedRuns: [] };
       const mySlot = this.state.players[this.state.connection.mySlotIndex];
       if (mySlot) {
         mySlot.userId = "";
         mySlot.username = "";
+        mySlot.name = "Trainer";
+        mySlot.party = [];
+        mySlot.bagItems = [];
+        mySlot.tutorialComplete = false;
+        mySlot.flashRev = 0;
+      }
+      if (global.PokemonWasmBridge && typeof global.PokemonWasmBridge._syncPeersToWasm === "function") {
+        global.PokemonWasmBridge._syncPeersToWasm(this.state.players);
       }
       this.emit("auth");
+      this.emit("players");
       this.emit("saves");
+      this.emit("all");
     }
 
     async refreshCloudRuns() {
@@ -1762,6 +1901,18 @@
     }
 
     async hostRoom(customConfig, resumeSnapshot) {
+      if (this._validateSessionPromise) {
+        await this._validateSessionPromise.catch(() => {});
+      }
+      if (!this.isSignedIn()) {
+        this.emit("auth_required", { action: "host" });
+        this.emit("toast", {
+          kind: "warn",
+          title: "Sign In Required",
+          message: "Please sign in or create an account before hosting a room.",
+        });
+        return false;
+      }
       this.disconnect();
       let freshResetMode = "";
       if (resumeSnapshot) {
@@ -1885,6 +2036,15 @@
     }
 
     joinRoom(roomPort, options) {
+      if (!this.isSignedIn()) {
+        this.emit("auth_required", { action: "join", port: Number(roomPort) || 0 });
+        this.emit("toast", {
+          kind: "warn",
+          title: "Sign In Required",
+          message: "Please sign in or create an account before joining a room.",
+        });
+        return false;
+      }
       const port = Number(roomPort) || 27462;
       const joinOpts = options && typeof options === "object" ? options : {};
       this.disconnect();
@@ -2606,6 +2766,54 @@
       } else if (channel === CH_WORLD_SYNC) {
         if (msg.t === "badge_unlock") {
           this.unlockBadge(Number(msg.badgeIndex), { fromPeerId, fromLocalWasm });
+        } else if (msg.t === "world_flag") {
+          const flagId = Number(msg.flagId);
+          if (Number.isInteger(flagId) && flagId > 0) {
+            const valBool = Boolean(msg.val);
+            if (!this.state.world.globalFlags || typeof this.state.world.globalFlags !== "object") {
+              this.state.world.globalFlags = {};
+            }
+            const prevBool = Boolean(this.state.world.globalFlags[String(flagId)]);
+            this.state.world.globalFlags[String(flagId)] = valBool;
+            if (!fromLocalWasm) {
+              global.PokemonWasmBridge._dispatchWasmJson(CH_WORLD_SYNC, fromPeerId || 1, {
+                t: "world_flag",
+                flagId,
+                val: valBool ? 1 : 0,
+              });
+            }
+            if (prevBool !== valBool) {
+              if (this.isNetworkHost()) {
+                this.broadcastChannel(CH_WORLD_SYNC, { t: "world_flag", flagId, val: valBool ? 1 : 0 });
+              }
+              this.saveRunSnapshotToDb(undefined, { silentBroadcast: true, skipWasmSave: true }).catch(() => {});
+              this.emit("world");
+            }
+          }
+        } else if (msg.t === "world_var") {
+          const varId = Number(msg.varId);
+          const valNum = Math.max(0, Math.floor(Number(msg.val) || 0));
+          if (Number.isInteger(varId) && varId > 0) {
+            if (!this.state.world.globalVars || typeof this.state.world.globalVars !== "object") {
+              this.state.world.globalVars = {};
+            }
+            const prevVal = this.state.world.globalVars[String(varId)];
+            this.state.world.globalVars[String(varId)] = valNum;
+            if (!fromLocalWasm) {
+              global.PokemonWasmBridge._dispatchWasmJson(CH_WORLD_SYNC, fromPeerId || 1, {
+                t: "world_var",
+                varId,
+                val: valNum,
+              });
+            }
+            if (prevVal !== valNum) {
+              if (this.isNetworkHost()) {
+                this.broadcastChannel(CH_WORLD_SYNC, { t: "world_var", varId, val: valNum });
+              }
+              this.saveRunSnapshotToDb(undefined, { silentBroadcast: true, skipWasmSave: true }).catch(() => {});
+              this.emit("world");
+            }
+          }
         } else if (msg.t === "cutscene_trigger") {
           this._hostStartCutscene(
             msg.cutsceneId,
@@ -2938,8 +3146,13 @@
       if (global.PokemonWasmBridge._dispatchWasmJson(CH_CONTROL, fromPeerId, { t: "run_config_sync" })) {
         this._pendingRunConfigSync = null;
       }
-      if (msg.world && Array.isArray(msg.world.badges) && msg.world.badges.some(Boolean)) {
-        const worldMsg = { t: "world_sync", badges: msg.world.badges };
+      if (
+        msg.world &&
+        ((Array.isArray(msg.world.badges) && msg.world.badges.some(Boolean)) ||
+          (msg.world.globalFlags && Object.keys(msg.world.globalFlags).length > 0) ||
+          (msg.world.globalVars && Object.keys(msg.world.globalVars).length > 0))
+      ) {
+        const worldMsg = { t: "world_sync", badges: msg.world.badges, world: msg.world };
         this._pendingWorldSync = { fromPeerId, msg: worldMsg };
         if (global.PokemonWasmBridge._dispatchWasmJson(CH_WORLD_SYNC, fromPeerId, worldMsg)) {
           this._pendingWorldSync = null;
@@ -3085,6 +3298,26 @@
           }
         } else if (msg.t === "badge_unlock") {
           global.PokemonWasmBridge._dispatchWasmJson(channel, fromPeerId, msg, rawBytes);
+        } else if (msg.t === "world_flag") {
+          const flagId = Number(msg.flagId);
+          if (Number.isInteger(flagId) && flagId > 0) {
+            if (!this.state.world.globalFlags || typeof this.state.world.globalFlags !== "object") {
+              this.state.world.globalFlags = {};
+            }
+            this.state.world.globalFlags[String(flagId)] = Boolean(msg.val);
+            global.PokemonWasmBridge._dispatchWasmJson(channel, fromPeerId, msg, rawBytes);
+            this.emit("world");
+          }
+        } else if (msg.t === "world_var") {
+          const varId = Number(msg.varId);
+          if (Number.isInteger(varId) && varId > 0) {
+            if (!this.state.world.globalVars || typeof this.state.world.globalVars !== "object") {
+              this.state.world.globalVars = {};
+            }
+            this.state.world.globalVars[String(varId)] = Math.max(0, Math.floor(Number(msg.val) || 0));
+            global.PokemonWasmBridge._dispatchWasmJson(channel, fromPeerId, msg, rawBytes);
+            this.emit("world");
+          }
         } else if (msg.t === "cutscene_start" || msg.t === "cutscene_update") {
           const mySlotIdx = this.state.connection.mySlotIndex;
           const prevCutscene = this.state.activeCutscene;
@@ -5063,6 +5296,18 @@
         if (global.PokemonWasmBridge._dispatchWasmJson(CH_CONTROL, 1, { t: "run_config_sync" })) {
           this._pendingRunConfigSync = null;
         }
+        if (
+          this.state.world &&
+          ((Array.isArray(this.state.world.badges) && this.state.world.badges.some(Boolean)) ||
+            (this.state.world.globalFlags && Object.keys(this.state.world.globalFlags).length > 0) ||
+            (this.state.world.globalVars && Object.keys(this.state.world.globalVars).length > 0))
+        ) {
+          const worldMsg = { t: "world_sync", badges: this.state.world.badges, world: this.state.world };
+          this._pendingWorldSync = { fromPeerId: 1, msg: worldMsg };
+          if (global.PokemonWasmBridge._dispatchWasmJson(CH_WORLD_SYNC, 1, worldMsg)) {
+            this._pendingWorldSync = null;
+          }
+        }
         global.PokemonWasmBridge._loadSnapshotIntoWasm(snapshot);
       } else {
         this._applySpeed(this.state.runConfig.speedMultiplier);
@@ -5414,25 +5659,65 @@
         typeof global.location !== "undefined" &&
         global.location.search &&
         Number(new URLSearchParams(global.location.search).get("room")) > 0;
+      const scheduleSignedInAutoResume = async () => {
+        if (client._validateSessionPromise) {
+          await client._validateSessionPromise.catch(() => {});
+        }
+        if (!client.isSignedIn()) {
+          client._pendingWasmResume = false;
+          return;
+        }
+        const meta = readFlashSaveMeta();
+        if (meta.userId && meta.userId !== "guest" && meta.userId !== client.state.auth.userId) {
+          return;
+        }
+        if (
+          client._pendingWasmResume ||
+          (!hasAutoJoinRoom &&
+            client.state.connection.status === "offline" &&
+            hasValidWasmFlashSave() &&
+            meta.userId === client.state.auth.userId)
+        ) {
+          client._pendingWasmResume = false;
+          if (client._wasmResumeTimer) clearTimeout(client._wasmResumeTimer);
+          client._wasmResumeTimer = setTimeout(() => {
+            client._wasmResumeTimer = null;
+            if (!client.isSignedIn() || client._pendingWasmResetMode || client.state.connection.status === "connecting") {
+              return;
+            }
+            const m = client.wasmModule;
+            if (m && typeof m._mp_on_snapshot_loaded === "function") {
+              m._mp_on_snapshot_loaded();
+            }
+            this._syncSoulLinkToWasm(client.state);
+          }, 120);
+        }
+      };
       if (client._pendingWasmResetMode) {
         const pendingReset = client._pendingWasmResetMode;
         client._pendingWasmResetMode = "";
         this._resetNewGameInWasm(pendingReset);
-      } else if (client._pendingWasmResume || (!hasAutoJoinRoom && client.state.connection.status === "offline" && hasValidWasmFlashSave())) {
-        client._pendingWasmResume = false;
-        if (client._wasmResumeTimer) clearTimeout(client._wasmResumeTimer);
-        client._wasmResumeTimer = setTimeout(() => {
-          client._wasmResumeTimer = null;
-          if (client._pendingWasmResetMode || client.state.connection.status === "connecting") return;
-          const m = client.wasmModule;
-          if (m && typeof m._mp_on_snapshot_loaded === "function") {
-            m._mp_on_snapshot_loaded();
-          }
-          this._syncSoulLinkToWasm(client.state);
-        }, 120);
+      } else {
+        scheduleSignedInAutoResume();
       }
       client.addLog("Emscripten pokeemerald-expansion WASM core booted!", "gold");
       client.emit("wasm");
+    },
+
+    isAuthSignedIn() {
+      return Boolean(client && client.isSignedIn());
+    },
+
+    _returnToTitleScreenInWasm(options) {
+      const autosave = options && options.autosave ? 1 : 0;
+      const m = client.wasmModule;
+      if (m && typeof m._mp_return_to_title_screen === "function") {
+        return Boolean(m._mp_return_to_title_screen(autosave));
+      }
+      if (autosave && m && typeof m._mp_save_game_now === "function") {
+        return Boolean(m._mp_save_game_now());
+      }
+      return false;
     },
 
     _saveGameInWasm() {
@@ -5539,17 +5824,18 @@
     },
 
     setKeyboardMask(mask) {
-      const clean = (Number(mask) || 0) & 0x03ff;
+      const clean = client.isSignedIn() ? (Number(mask) || 0) & 0x03ff : 0;
       client._keyboardInputMask = clean;
       const m = client.wasmModule;
       if (m && typeof m._wasm_set_gamepad_mask !== "function" && typeof m._wasm_set_input_mask === "function") {
-        m._wasm_set_input_mask((clean | (client._gamepadInputMask || 0)) & 0x03ff);
+        const gp = client.isSignedIn() ? client._gamepadInputMask || 0 : 0;
+        m._wasm_set_input_mask((clean | gp) & 0x03ff);
       }
       return clean;
     },
 
     setInputMask(mask, source) {
-      const clean = (Number(mask) || 0) & 0x03ff;
+      const clean = client.isSignedIn() ? (Number(mask) || 0) & 0x03ff : 0;
       const m = client.wasmModule;
       if (source === "gamepad") {
         client._gamepadInputMask = clean;
@@ -5559,14 +5845,16 @@
           return true;
         }
         if (typeof m._wasm_set_input_mask === "function") {
-          m._wasm_set_input_mask((clean | (client._keyboardInputMask || 0)) & 0x03ff);
+          const kb = client.isSignedIn() ? client._keyboardInputMask || 0 : 0;
+          m._wasm_set_input_mask((clean | kb) & 0x03ff);
           return true;
         }
         return false;
       }
       client._keyboardInputMask = clean;
       if (m && typeof m._wasm_set_input_mask === "function") {
-        m._wasm_set_input_mask((clean | (client._gamepadInputMask || 0)) & 0x03ff);
+        const gp = client.isSignedIn() ? client._gamepadInputMask || 0 : 0;
+        m._wasm_set_input_mask((clean | gp) & 0x03ff);
         return true;
       }
       return false;

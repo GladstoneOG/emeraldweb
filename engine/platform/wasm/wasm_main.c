@@ -278,13 +278,41 @@ WASM_KEEPALIVE void wasm_step_frames(int count, int renderLast)
     sInsideStepFrame = false;
 }
 
+#ifdef __EMSCRIPTEN__
+EM_JS(int, js_is_auth_signed_in, (void), {
+    if (typeof window !== "undefined" && window.PokemonWasmBridge &&
+        typeof window.PokemonWasmBridge.isAuthSignedIn === "function") {
+        return window.PokemonWasmBridge.isAuthSignedIn() ? 1 : 0;
+    }
+    return 0;
+});
+#endif
+
+bool WasmPlatform_IsAuthSignedIn(void)
+{
+#ifdef __EMSCRIPTEN__
+    return js_is_auth_signed_in() != 0;
+#else
+    return true;
+#endif
+}
+
 WASM_KEEPALIVE void wasm_set_input_mask(int keyMask)
 {
+    if (!WasmPlatform_IsAuthSignedIn()) {
+        WasmPlatform_SetKeys(0);
+        return;
+    }
     WasmPlatform_SetKeys((uint16_t)keyMask);
 }
 
 WASM_KEEPALIVE void wasm_set_gamepad_mask(int keyMask)
 {
+    if (!WasmPlatform_IsAuthSignedIn()) {
+        sGamepadMask = 0;
+        WasmPlatform_ApplyKeys();
+        return;
+    }
     sGamepadMask = (uint16_t)keyMask & 0x03FFu;
     WasmPlatform_ApplyKeys();
 }
@@ -349,8 +377,12 @@ static EM_BOOL OnKeyEvent(int eventType, const EmscriptenKeyboardEvent *e, void 
     if (bit == 0)
         return EM_FALSE;
 
-    /* Ignore when typing into HUD modal inputs */
-    if (js_is_dom_input_focused()) {
+    /* Ignore when typing into HUD modal inputs or while signed out */
+    if (js_is_dom_input_focused() || !WasmPlatform_IsAuthSignedIn()) {
+        if (!WasmPlatform_IsAuthSignedIn()) {
+            sLatchedKeysMask = 0;
+            WasmPlatform_SetKeys(0);
+        }
         return EM_FALSE;
     }
 

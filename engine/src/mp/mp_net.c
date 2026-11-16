@@ -332,6 +332,42 @@ static uint8_t ParseBadgesArrayMask(const char *json)
     return mask;
 }
 
+static void ApplyWorldPairsFromJson(const char *json, const char *key, bool isVars)
+{
+    const char *p = JsonFindKey(json, key);
+    if (!p || *p != '[')
+        return;
+    p++;
+    while (*p != '\0' && *p != ']') {
+        while (*p != '\0' && *p != '[' && *p != ']')
+            p++;
+        if (*p != '[')
+            break;
+        p++;
+        char *endPtr = NULL;
+        long id = strtol(p, &endPtr, 10);
+        if (endPtr == p)
+            break;
+        p = endPtr;
+        while (*p == ' ' || *p == '\t' || *p == ',')
+            p++;
+        long val = strtol(p, &endPtr, 10);
+        if (endPtr == p)
+            break;
+        p = endPtr;
+        while (*p != '\0' && *p != ']')
+            p++;
+        if (*p == ']')
+            p++;
+        if (id > 0 && id <= 0xFFFFL) {
+            if (isVars)
+                MpWorldSync_ApplyRemoteVarFromBridge((uint16_t)id, (uint16_t)(val < 0 ? 0 : val));
+            else
+                MpWorldSync_ApplyRemoteFlagFromBridge((uint16_t)id, val != 0);
+        }
+    }
+}
+
 static uint16_t ExtractCutsceneId(const char *json)
 {
     static const char *const kKeys[] = { "cutsceneId", "completedId" };
@@ -415,7 +451,7 @@ static void HandleControlBinary(uint16_t fromPeerId, uint8_t fromSlot, uint8_t o
 
 static void HandleIncomingJson(uint16_t fromPeerId, const char *json, size_t len)
 {
-    char buf[1024];
+    char buf[2048];
     size_t copyLen = (len < sizeof(buf) - 1) ? len : (sizeof(buf) - 1);
     memcpy(buf, json, copyLen);
     buf[copyLen] = '\0';
@@ -442,10 +478,26 @@ static void HandleIncomingJson(uint16_t fromPeerId, const char *json, size_t len
         if (JsonExtractInt(buf, "badgeIndex", &badgeIdx) && badgeIdx >= 0 && badgeIdx < 8) {
             MpWorldSync_GrantBadgeHmsLocal((uint8_t)(1u << badgeIdx));
         }
+    } else if (strcmp(typeStr, "world_flag") == 0) {
+        int32_t flagId = 0;
+        int32_t val = 0;
+        if (JsonExtractInt(buf, "flagId", &flagId) && flagId > 0 && flagId <= 0xFFFF) {
+            JsonExtractInt(buf, "val", &val);
+            MpWorldSync_ApplyRemoteFlagFromBridge((uint16_t)flagId, val != 0);
+        }
+    } else if (strcmp(typeStr, "world_var") == 0) {
+        int32_t varId = 0;
+        int32_t val = 0;
+        if (JsonExtractInt(buf, "varId", &varId) && varId > 0 && varId <= 0xFFFF) {
+            JsonExtractInt(buf, "val", &val);
+            MpWorldSync_ApplyRemoteVarFromBridge((uint16_t)varId, (uint16_t)(val < 0 ? 0 : val));
+        }
     } else if (strcmp(typeStr, "world_sync") == 0) {
         uint8_t badgesMask = ParseBadgesArrayMask(buf);
         if (badgesMask != 0)
             MpWorldSync_GrantBadgeHmsLocal(badgesMask);
+        ApplyWorldPairsFromJson(buf, "flags", false);
+        ApplyWorldPairsFromJson(buf, "vars", true);
     } else if (strcmp(typeStr, "cutscene_trigger") == 0 ||
                strcmp(typeStr, "cutscene_start") == 0 ||
                strcmp(typeStr, "cutscene_update") == 0 ||
@@ -636,11 +688,14 @@ void MpNet_StepFrame(void)
     SyncLocalSlotFromBridge();
     int resetMode = 0;
     bool resetNewGame = WasmMp_ConsumeResetNewGameRequest(&resetMode);
+    bool returnToTitle = WasmMp_ConsumeReturnToTitleRequest();
     bool snapshotLoaded = WasmMp_ConsumeSnapshotLoadedFlag();
-    if ((sFrameTick % 30u) == 0u || snapshotLoaded || resetNewGame) {
+    if ((sFrameTick % 30u) == 0u || snapshotLoaded || resetNewGame || returnToTitle) {
         MpNet_RefreshConfigFromBridge();
     }
-    if (resetNewGame) {
+    if (returnToTitle) {
+        MpOverworld_ReturnToTitleScreen();
+    } else if (resetNewGame) {
         MpOverworld_ResetToNewGame(resetMode != 0);
     } else if (snapshotLoaded) {
         MpOverworld_ResumeOrBootstrapFromSave();

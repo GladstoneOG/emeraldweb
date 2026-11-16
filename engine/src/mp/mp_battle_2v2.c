@@ -299,6 +299,11 @@ static bool CanLocalPlayerDynamax(void)
     return true;
 }
 
+static bool CanLocalPlayerTera(void)
+{
+    return CheckBagHasItem(ITEM_TERA_ORB, 1) ? true : false;
+}
+
 static void ApplyDefaultAiGimmickBlock(struct Pokemon *mon)
 {
     if (mon == NULL)
@@ -307,6 +312,11 @@ static void ApplyDefaultAiGimmickBlock(struct Pokemon *mon)
     {
         u8 dynamaxBlock = BLOCK_AI_DYNAMAX;
         SetMonData(mon, MON_DATA_DYNAMAX_LEVEL, &dynamaxBlock);
+    }
+    if (!CanLocalPlayerTera())
+    {
+        u8 teraBlock = TYPE_MYSTERY;
+        SetMonData(mon, MON_DATA_TERA_TYPE, &teraBlock);
     }
 }
 

@@ -326,19 +326,9 @@
         <button id="open-auth-btn" class="em-btn dark-ghost sm" type="button" title="Sign In or Register Account to Sync Multiplayer Saves">
           🔑 Sign In
         </button>
-        <button id="account-logout-btn" class="em-btn dark-ghost sm" type="button" style="display:none;" title="Log Out">
+        <button id="account-logout-btn" class="em-btn dark-ghost sm" type="button" style="display:none;" title="Log Out (Autosaves &amp; Returns to Title Screen)">
           Logout
         </button>
-
-        <label for="player-name-input" class="gba-font" style="font-size:11px;color:#a9d9c8;">TRAINER:</label>
-        <input
-          id="player-name-input"
-          class="em-input em-input-dark gba-font"
-          style="width:118px;padding:3px 7px;font-size:11px;"
-          type="text"
-          maxlength="20"
-          placeholder="Your Name"
-        />
 
         <!-- Host-Only Global Speed Control (1x / 2x / 3x) -->
         <div id="speed-control-group" class="speed-group" title="Host-Only Global Game Speed (Syncs to all players)">
@@ -430,6 +420,20 @@
               PREVIEW MODE: index.wasm not compiled yet — Relay, Speed Sync, Soul-Link Matrix, Quick-Trade &amp; Saves are live!
             </span>
             <button id="dismiss-preview-pill-btn" class="em-btn dark-ghost sm" type="button">Dismiss</button>
+          </div>
+          <div id="auth-gate-overlay" role="dialog" aria-modal="false" aria-label="Account Sign In Required">
+            <div class="auth-gate-card em-panel">
+              <div class="gba-font" style="font-size:15px;font-weight:700;color:#154c3e;">
+                🔑 TRAINER SIGN-IN REQUIRED
+              </div>
+              <p style="font-size:12px;color:#27443c;margin:8px 0 12px;line-height:1.45;">
+                Sign in or create a Trainer account to start playing, host/join rooms, and sync your Flash saves. Your username will be used as your default Trainer name.
+              </p>
+              <div style="display:flex;justify-content:center;gap:8px;flex-wrap:wrap;">
+                <button id="auth-gate-signin-btn" class="em-btn primary" type="button">🔑 Sign In</button>
+                <button id="auth-gate-register-btn" class="em-btn gold" type="button">➕ Create Account</button>
+              </div>
+            </div>
           </div>
         </div>
         <div id="stage-controls-hint" class="stage-controls-hint gba-font">

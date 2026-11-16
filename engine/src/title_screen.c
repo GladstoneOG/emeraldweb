@@ -24,6 +24,9 @@
 #include "graphics.h"
 #include "constants/rgb.h"
 #include "constants/songs.h"
+#ifdef WASM_PLATFORM
+#include "wasm_platform.h"
+#endif
 
 enum {
     TAG_VERSION = 1000,
@@ -780,27 +783,32 @@ static void Task_TitleScreenPhase2(u8 taskId)
 // Show Rayquaza silhouette and process main title screen input
 static void Task_TitleScreenPhase3(u8 taskId)
 {
-    if (QUICKSTART && JOY_NEW(SELECT_BUTTON))
+#ifdef WASM_PLATFORM
+    bool authSignedIn = WasmPlatform_IsAuthSignedIn();
+#else
+    bool authSignedIn = TRUE;
+#endif
+    if (authSignedIn && QUICKSTART && JOY_NEW(SELECT_BUTTON))
         Quickstart();
 
-    if (JOY_NEW(A_BUTTON) || JOY_NEW(START_BUTTON))
+    if (authSignedIn && (JOY_NEW(A_BUTTON) || JOY_NEW(START_BUTTON)))
     {
         FadeOutBGM(4);
         BeginNormalPaletteFade(PALETTES_ALL, 0, 0, 16, RGB_WHITEALPHA);
         SetMainCallback2(CB2_GoToMainMenu);
     }
-    else if (JOY_HELD(CLEAR_SAVE_BUTTON_COMBO) == CLEAR_SAVE_BUTTON_COMBO)
+    else if (authSignedIn && JOY_HELD(CLEAR_SAVE_BUTTON_COMBO) == CLEAR_SAVE_BUTTON_COMBO)
     {
         SetMainCallback2(CB2_GoToClearSaveDataScreen);
     }
-    else if (JOY_HELD(RESET_RTC_BUTTON_COMBO) == RESET_RTC_BUTTON_COMBO
+    else if (authSignedIn && JOY_HELD(RESET_RTC_BUTTON_COMBO) == RESET_RTC_BUTTON_COMBO
       && CanResetRTC() == TRUE)
     {
         FadeOutBGM(4);
         BeginNormalPaletteFade(PALETTES_ALL, 0, 0, 16, RGB_BLACK);
         SetMainCallback2(CB2_GoToResetRtcScreen);
     }
-    else if (JOY_HELD(BERRY_UPDATE_BUTTON_COMBO) == BERRY_UPDATE_BUTTON_COMBO)
+    else if (authSignedIn && JOY_HELD(BERRY_UPDATE_BUTTON_COMBO) == BERRY_UPDATE_BUTTON_COMBO)
     {
         FadeOutBGM(4);
         BeginNormalPaletteFade(PALETTES_ALL, 0, 0, 16, RGB_BLACK);

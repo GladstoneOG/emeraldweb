@@ -53,6 +53,8 @@
   ]);
 
   let currentSidebarTab = "parties";
+  let pendingAutoInvitePort = 0;
+  let authModalMode = "login";
   let audioMuted = localStorage.getItem("pokemon_web_audio_muted") === "1";
   let audioVolume = (() => {
     const raw = localStorage.getItem("pokemon_web_audio_volume");
@@ -186,6 +188,12 @@
     const numPort = Number(port);
     if (!(numPort > 0)) return false;
     clearRoomsJoinError();
+    if (!PokemonNet.isSignedIn()) {
+      pendingAutoInvitePort = numPort;
+      openAuthModal("login");
+      showToast("warn", "Sign In Required", "Please sign in before joining a multiplayer room.");
+      return false;
+    }
     const room = (PokemonNet.remoteRooms || []).find((r) => Number(r.game_port) === numPort);
     if (room && room.game_over) {
       showToast("danger", "Run Ended", "This Soul-Link Nuzlocke run has ended (Game Over).");
@@ -216,6 +224,21 @@
     });
     closeModal("rooms-modal");
     return true;
+  }
+
+  function openAuthModal(mode) {
+    authModalMode = mode === "register" ? "register" : "login";
+    for (const t of document.querySelectorAll("[data-auth-tab]")) {
+      t.classList.toggle("active", t.dataset.authTab === authModalMode);
+    }
+    const submitBtn = $("auth-submit-btn");
+    if (submitBtn) submitBtn.textContent = authModalMode === "register" ? "Create Account" : "Sign In";
+    const pwInput = $("auth-password-input");
+    if (pwInput) pwInput.autocomplete = authModalMode === "register" ? "new-password" : "current-password";
+    const errBox = $("auth-error-box");
+    if (errBox) errBox.style.display = "none";
+    openModal("auth-modal");
+    if ($("auth-username-input")) $("auth-username-input").focus();
   }
 
   function openModal(id) {
@@ -507,6 +530,7 @@
     const logoutBtn = $("account-logout-btn");
     const savesAuthText = $("saves-auth-status-text");
     const savesOpenAuthBtn = $("saves-open-auth-btn");
+    const authGateOverlay = $("auth-gate-overlay");
 
     if (userBadge) {
       userBadge.style.display = signedIn ? "inline-flex" : "none";
@@ -517,6 +541,15 @@
     }
     if (logoutBtn) {
       logoutBtn.style.display = signedIn ? "inline-flex" : "none";
+    }
+    if (authGateOverlay) {
+      authGateOverlay.classList.toggle("hidden", signedIn);
+    }
+    if (signedIn && $("setup-room-name") && state && state.runConfig && state.runConfig.roomName) {
+      const rnInput = $("setup-room-name");
+      if (!rnInput.value.trim() || /^(Trainer|Guest|May\d+)'s Hoenn Run$/i.test(rnInput.value.trim())) {
+        rnInput.value = state.runConfig.roomName;
+      }
     }
     if (savesAuthText) {
       savesAuthText.textContent = signedIn
@@ -1505,10 +1538,19 @@
       openLateJoinModal({ source: "welcome", ...payload });
       return;
     }
+    if (reason === "auth_required") {
+      openAuthModal("login");
+      return;
+    }
     if (reason === "auth") {
       renderAuthUi(state);
       if ($("saves-modal") && $("saves-modal").classList.contains("open")) renderSavedRunsLists();
       if ($("rooms-modal") && $("rooms-modal").classList.contains("open")) renderSavedRunsLists();
+      if (PokemonNet.isSignedIn() && pendingAutoInvitePort > 0) {
+        const portToJoin = pendingAutoInvitePort;
+        pendingAutoInvitePort = 0;
+        setTimeout(() => attemptJoinRoomPort(portToJoin), 150);
+      }
       return;
     }
     if (reason === "saves") {
@@ -1620,8 +1662,12 @@
     if ($("setup-seed-input") && normalizedSeed) {
       $("setup-seed-input").value = normalizedSeed;
     }
+    const defaultTrainerName =
+      (PokemonNet.state.auth && PokemonNet.state.auth.username) ||
+      (PokemonNet.state.players[0] && PokemonNet.state.players[0].name) ||
+      "Trainer";
     return {
-      roomName: $("setup-room-name").value.trim() || `${$("player-name-input").value}'s Hoenn Run`,
+      roomName: $("setup-room-name").value.trim() || `${defaultTrainerName}'s Hoenn Run`,
       roomPort: parseInt($("setup-room-port").value, 10) || 27462,
       seed: normalizedSeed,
       soulLinkMode: $("setup-soullink-mode").value,
@@ -1882,28 +1928,22 @@
     }
   }
 
-  function handleAutoInviteJoin() {
+  async function handleAutoInviteJoin() {
     if (!global.location || !global.location.search) return;
     const roomParam = new URLSearchParams(global.location.search).get("room");
     const port = Number(roomParam);
     if (port > 0) {
+      if (PokemonNet._validateSessionPromise) {
+        await PokemonNet._validateSessionPromise.catch(() => {});
+      }
       setTimeout(() => {
-        PokemonNet.joinRoom(port);
+        attemptJoinRoomPort(port);
       }, 300);
     }
   }
 
   // --- Wire DOM Events ---
   function bindEvents() {
-    const nameInput = $("player-name-input");
-    if (nameInput) {
-      nameInput.value = PokemonNet.state.players[0].name;
-      nameInput.addEventListener("change", (e) => {
-        PokemonNet.setPlayerName(e.target.value);
-        focusCanvas();
-      });
-    }
-
     const relayInput = $("relay-url-input");
     if (relayInput) {
       relayInput.value = global.POKEMON_RELAY_URL || "";
@@ -2044,11 +2084,18 @@
     $("setup-randomizer-preset").addEventListener("change", (e) => applyRandomizerPresetToForm(e.target.value));
     $("setup-nuzlocke-preset").addEventListener("change", (e) => applyNuzlockePresetToForm(e.target.value));
 
-    $("launch-host-room-btn").addEventListener("click", () => {
+    $("launch-host-room-btn").addEventListener("click", async () => {
       clearRoomsJoinError();
+      if (!PokemonNet.isSignedIn()) {
+        openAuthModal("login");
+        showToast("warn", "Sign In Required", "Please sign in or create an account before hosting a room.");
+        return;
+      }
       const cfg = collectHostRunConfigFromForm();
-      PokemonNet.hostRoom(cfg);
-      closeModal("rooms-modal");
+      const started = await PokemonNet.hostRoom(cfg);
+      if (started !== false) {
+        closeModal("rooms-modal");
+      }
     });
 
     async function handleSavedRunsAction(e, modalToClose) {
@@ -2060,29 +2107,41 @@
       }
       const resBtn = e.target.closest("[data-resume-run]");
       if (resBtn) {
+        if (!PokemonNet.isSignedIn()) {
+          openAuthModal("login");
+          return true;
+        }
         const runs = await PokemonNet.listSavedRuns();
         const found = runs.find((r) => r.runId === resBtn.dataset.resumeRun);
         if (found) {
-          await PokemonNet.hostRoom(null, found);
-          closeModal(modalToClose);
+          const started = await PokemonNet.hostRoom(null, found);
+          if (started !== false) closeModal(modalToClose);
         }
         return true;
       }
       const resCloudBtn = e.target.closest("[data-resume-cloud-run]");
       if (resCloudBtn) {
+        if (!PokemonNet.isSignedIn()) {
+          openAuthModal("login");
+          return true;
+        }
         const runId = resCloudBtn.dataset.resumeCloudRun;
         const cloudRun = (PokemonNet.cloudRuns && PokemonNet.cloudRuns.hostedRuns || []).find((r) => r.runId === runId);
         if (cloudRun) {
           const snap = await PokemonNet.buildSnapshotFromCloudRun(cloudRun, 0);
           if (snap) {
-            await PokemonNet.hostRoom(null, snap);
-            closeModal(modalToClose);
+            const started = await PokemonNet.hostRoom(null, snap);
+            if (started !== false) closeModal(modalToClose);
           }
         }
         return true;
       }
       const resCloudPeerBtn = e.target.closest("[data-resume-cloud-peer]");
       if (resCloudPeerBtn) {
+        if (!PokemonNet.isSignedIn()) {
+          openAuthModal("login");
+          return true;
+        }
         const runId = resCloudPeerBtn.dataset.resumeCloudPeer;
         const cloudRun = (PokemonNet.cloudRuns && PokemonNet.cloudRuns.joinedRuns || []).find((r) => r.runId === runId);
         if (cloudRun) {
@@ -2346,27 +2405,20 @@
     });
 
     // Account Auth Modal & Controls
-    let authModalMode = "login";
-    const openAuthWithMode = (mode) => {
-      authModalMode = mode === "register" ? "register" : "login";
-      for (const t of document.querySelectorAll("[data-auth-tab]")) {
-        t.classList.toggle("active", t.dataset.authTab === authModalMode);
-      }
-      const submitBtn = $("auth-submit-btn");
-      if (submitBtn) submitBtn.textContent = authModalMode === "register" ? "Create Account" : "Sign In";
-      const pwInput = $("auth-password-input");
-      if (pwInput) pwInput.autocomplete = authModalMode === "register" ? "new-password" : "current-password";
-      const errBox = $("auth-error-box");
-      if (errBox) errBox.style.display = "none";
-      openModal("auth-modal");
-      if ($("auth-username-input")) $("auth-username-input").focus();
-    };
-    if ($("open-auth-btn")) $("open-auth-btn").addEventListener("click", () => openAuthWithMode("login"));
-    if ($("saves-open-auth-btn")) $("saves-open-auth-btn").addEventListener("click", () => openAuthWithMode("login"));
+    if ($("open-auth-btn")) $("open-auth-btn").addEventListener("click", () => openAuthModal("login"));
+    if ($("auth-gate-signin-btn")) $("auth-gate-signin-btn").addEventListener("click", () => openAuthModal("login"));
+    if ($("auth-gate-register-btn")) $("auth-gate-register-btn").addEventListener("click", () => openAuthModal("register"));
+    if ($("saves-open-auth-btn")) $("saves-open-auth-btn").addEventListener("click", () => openAuthModal("login"));
     if ($("account-logout-btn")) {
       $("account-logout-btn").addEventListener("click", async () => {
-        await PokemonNet.logoutAccount();
-        showToast("info", "Signed Out", "Switched to Guest / Local mode.");
+        const btn = $("account-logout-btn");
+        if (btn) btn.disabled = true;
+        try {
+          await PokemonNet.logoutAccount();
+          showToast("info", "Signed Out", "Autosaved your run and returned to the Title Screen.");
+        } finally {
+          if (btn) btn.disabled = false;
+        }
         focusCanvas();
       });
     }

@@ -65,6 +65,10 @@ bool32 IsTeraOrbCharged(void)
     return FlagGet(B_FLAG_TERA_ORB_CHARGED);
 }
 
+#ifdef WASM_PLATFORM
+#include "mp_battle_2v2.h"
+#endif
+
 // Returns whether a battler can Terastallize.
 bool32 CanTerastallize(enum BattlerId battler)
 {
@@ -77,17 +81,17 @@ bool32 CanTerastallize(enum BattlerId battler)
     if (gBattleTypeFlags & BATTLE_TYPE_FIRST_BATTLE && !IsOnPlayerSide(battler))
         return FALSE;
 
-    if (TESTING || !IsOnPlayerSide(battler))
-    {
-        // Skip all other checks in this block, go to HasTrainerUsedGimmick
-    }
-    else if (!CheckBagHasItem(ITEM_TERA_ORB, 1))
-    {
+    if (!CanBattlerUseCampaignGimmick(battler, ITEM_TERA_ORB))
         return FALSE;
-    }
-    else if (!IsTeraOrbCharged())
+
+    if (!TESTING && IsBattlerHumanControlled(battler) && !IsTeraOrbCharged())
     {
-        return FALSE;
+        bool32 isRemotePeer = FALSE;
+#ifdef WASM_PLATFORM
+        isRemotePeer = MpBattle2v2_IsRemoteControlledBattler(battler);
+#endif
+        if (!isRemotePeer)
+            return FALSE;
     }
 
     // Check if Trainer has already Terastallized.

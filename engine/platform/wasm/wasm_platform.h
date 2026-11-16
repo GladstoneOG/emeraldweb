@@ -74,6 +74,7 @@ void WasmPlatform_StepFrame(void);
 void WasmPlatform_VBlankYield(void);
 void WasmPlatform_SetKeys(uint16_t pressedMask);
 uint16_t WasmPlatform_GetKeys(void);
+bool WasmPlatform_IsAuthSignedIn(void);
 void WasmPlatform_SetSpeedMultiplier(int speed);
 int WasmPlatform_GetSpeedMultiplier(void);
 
@@ -155,6 +156,7 @@ int WasmMp_PopPendingLinkDeath(void);
 bool WasmMp_ConsumeTradeCommitFlag(void);
 bool WasmMp_ConsumeSnapshotLoadedFlag(void);
 bool WasmMp_ConsumeResetNewGameRequest(int *outMode);
+bool WasmMp_ConsumeReturnToTitleRequest(void);
 int WasmPlatform_InvokeFnPtr(uintptr_t fnPtr, int arg0, int arg1);
 
 /* Exported JS-callable symbols matching public/net_bridge.js */
@@ -167,6 +169,7 @@ WASM_KEEPALIVE void mp_kill_linked_pokemon(int linkIdNum);
 WASM_KEEPALIVE void mp_on_trade_commit(void);
 WASM_KEEPALIVE void mp_on_snapshot_loaded(void);
 WASM_KEEPALIVE void mp_reset_new_game(int mode);
+WASM_KEEPALIVE int mp_return_to_title_screen(int autosave);
 WASM_KEEPALIVE int mp_save_game_now(void);
 WASM_KEEPALIVE uintptr_t wasm_get_framebuffer_ptr(void);
 WASM_KEEPALIVE void wasm_set_input_mask(int keyMask);

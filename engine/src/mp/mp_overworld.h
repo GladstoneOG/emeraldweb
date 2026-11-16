@@ -22,6 +22,15 @@ void MpOverworld_InteractWithRemotePlayer(uint8_t peerSlot);
 /** Immediately save current overworld progress into GBA Flash (synced to localStorage). */
 bool MpOverworld_SaveGameNow(void);
 
+/** Autosave active gameplay before returning to Title Screen on account logout. */
+bool MpOverworld_SaveGameForLogout(void);
+
+/** Return cleanly to GBA Title Screen without erasing Flash storage. */
+void MpOverworld_ReturnToTitleScreen(void);
+
+/** Apply logged-in / lobby username as default playerName in gSaveBlock2Ptr. */
+void MpOverworld_ApplyLobbyNameIfPresent(void);
+
 /** Notify JS/Host/Server that GBA Flash was written (used by both auto-save and manual Start Menu save). */
 void MpOverworld_NotifyFlashSaved(void);
 

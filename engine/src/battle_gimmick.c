@@ -13,6 +13,9 @@
 #include "sprite.h"
 #include "util.h"
 #include "test_runner.h"
+#ifdef WASM_PLATFORM
+#include "mp_battle_2v2.h"
+#endif
 
 #include "data/gimmicks.h"
 
@@ -62,6 +65,36 @@ enum Gimmick GetActiveGimmick(enum BattlerId battler)
     return gBattleStruct->gimmick.activeGimmick[GetBattlerTrainer(battler)][gBattlerPartyIndexes[battler]];
 }
 
+bool32 IsBattlerHumanControlled(enum BattlerId battler)
+{
+#ifdef WASM_PLATFORM
+    if (MpBattle2v2_IsRemoteControlledBattler(battler))
+        return TRUE;
+#endif
+    if (IsOnPlayerSide(battler) && !((gBattleTypeFlags & BATTLE_TYPE_MULTI) && GetBattlerPosition(battler) == B_POSITION_PLAYER_RIGHT))
+        return TRUE;
+    return FALSE;
+}
+
+bool32 CanBattlerUseCampaignGimmick(enum BattlerId battler, enum Item requiredItem)
+{
+    if (TESTING)
+        return TRUE;
+
+    if (!(gBattleTypeFlags & BATTLE_TYPE_TRAINER) && !IsOnPlayerSide(battler))
+        return FALSE;
+
+#ifdef WASM_PLATFORM
+    if (MpBattle2v2_IsRemoteControlledBattler(battler))
+        return TRUE;
+#endif
+
+    if (requiredItem != ITEM_NONE && !CheckBagHasItem(requiredItem, 1))
+        return FALSE;
+
+    return TRUE;
+}
+
 // Returns whether a trainer mon is intended to use an unrestrictive gimmick via .useGimmick (i.e Tera).
 bool32 ShouldTrainerBattlerUseGimmick(enum BattlerId battler, enum Gimmick gimmick)
 {
@@ -69,9 +102,13 @@ bool32 ShouldTrainerBattlerUseGimmick(enum BattlerId battler, enum Gimmick gimmi
     #if TESTING
     return gimmick == TestRunner_Battle_GetChosenGimmick(GetBattlerTrainer(battler), gBattlerPartyIndexes[battler]);
     #else
-    // The player can bypass these checks because they can choose through the controller.
-    if (IsOnPlayerSide(battler) && !((gBattleTypeFlags & BATTLE_TYPE_MULTI) && GetBattlerPosition(battler) == B_POSITION_PLAYER_RIGHT))
+    // Human players (local or synced remote MP peers) bypass AI party restrictions and choose through the controller.
+    if (IsBattlerHumanControlled(battler))
         return TRUE;
+
+    // Non-player wild Pokemon are not allowed to use trainer gimmicks unless explicitly unlocked in tests.
+    if (!(gBattleTypeFlags & BATTLE_TYPE_TRAINER) && !IsOnPlayerSide(battler))
+        return FALSE;
 
     // When reading trainer party data, we load invalid values in struct Pokemon to indicate the gimmick should not be used
     struct Pokemon *mon = GetBattlerMon(battler);

@@ -69,6 +69,10 @@ static const struct GMaxMove sGMaxMoveTable[] =
     {SPECIES_URSHIFU_RAPID_STRIKE_GMAX,       TYPE_WATER,      MOVE_G_MAX_RAPID_FLOW},
 };
 
+#ifdef WASM_PLATFORM
+#include "mp_battle_2v2.h"
+#endif
+
 // Returns whether a battler can Dynamax.
 bool32 CanDynamax(enum BattlerId battler)
 {
@@ -79,13 +83,16 @@ bool32 CanDynamax(enum BattlerId battler)
     if (gBattleTypeFlags & BATTLE_TYPE_FIRST_BATTLE && !IsOnPlayerSide(battler))
         return FALSE;
 
-    // Check if Player has a Dynamax Band.
-    if (!TESTING && (GetBattlerPosition(battler) == B_POSITION_PLAYER_LEFT
-        || (!(gBattleTypeFlags & BATTLE_TYPE_MULTI) && GetBattlerPosition(battler) == B_POSITION_PLAYER_RIGHT)))
+    if (!CanBattlerUseCampaignGimmick(battler, ITEM_DYNAMAX_BAND))
+        return FALSE;
+
+    if (!TESTING)
     {
-        if (!CheckBagHasItem(ITEM_DYNAMAX_BAND, 1))
-            return FALSE;
-        if (B_FLAG_DYNAMAX_BATTLE == 0 || (B_FLAG_DYNAMAX_BATTLE != 0 && !FlagGet(B_FLAG_DYNAMAX_BATTLE)))
+        bool32 isRemotePeer = FALSE;
+#ifdef WASM_PLATFORM
+        isRemotePeer = MpBattle2v2_IsRemoteControlledBattler(battler);
+#endif
+        if (!isRemotePeer && (B_FLAG_DYNAMAX_BATTLE == 0 || !FlagGet(B_FLAG_DYNAMAX_BATTLE)))
             return FALSE;
     }
 

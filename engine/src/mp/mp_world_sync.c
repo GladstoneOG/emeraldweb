@@ -546,6 +546,26 @@ bool MpWorldSync_IsGlobalVar(uint16_t varId)
     return false;
 }
 
+void MpWorldSync_ApplyRemoteFlagFromBridge(uint16_t flagId, bool value)
+{
+    if (!MpWorldSync_IsGlobalFlag(flagId))
+        return;
+    if (!MpWorldSync_IsLocalTutorialComplete())
+        QueuePendingFlag(flagId, value);
+    else if (FlagGet(flagId) != value)
+        ApplyRemoteFlagSync(flagId, value);
+}
+
+void MpWorldSync_ApplyRemoteVarFromBridge(uint16_t varId, uint16_t value)
+{
+    if (!MpWorldSync_IsGlobalVar(varId))
+        return;
+    if (!MpWorldSync_IsLocalTutorialComplete())
+        QueuePendingVar(varId, value);
+    else if (VarGet(varId) != value)
+        ApplyRemoteVarSync(varId, value);
+}
+
 void MpWorldSync_GrantBadgeHmsLocal(uint8_t badgesMask)
 {
     if (!MpWorldSync_IsLocalTutorialComplete()) {
@@ -601,6 +621,10 @@ void MpWorldSync_OnLocalFlagSet(uint16_t flagId, bool value)
     pkt.flagId = flagId;
     pkt.value = value ? 1u : 0u;
     MpNet_SendBinary(MP_CH_WORLD_SYNC, targetPeer, MP_PKT_WORLD_FLAG_SYNC, &pkt, sizeof(pkt));
+
+    char json[96];
+    snprintf(json, sizeof(json), "{\"t\":\"world_flag\",\"flagId\":%u,\"val\":%u}", (unsigned)flagId, value ? 1u : 0u);
+    MpNet_SendJson(MP_CH_WORLD_SYNC, MP_PEER_HOST, json);
 }
 
 void MpWorldSync_OnLocalVarSet(uint16_t varId, uint16_t value)
@@ -613,6 +637,10 @@ void MpWorldSync_OnLocalVarSet(uint16_t varId, uint16_t value)
     pkt.varId = varId;
     pkt.value = value;
     MpNet_SendBinary(MP_CH_WORLD_SYNC, targetPeer, MP_PKT_WORLD_VAR_SYNC, &pkt, sizeof(pkt));
+
+    char json[96];
+    snprintf(json, sizeof(json), "{\"t\":\"world_var\",\"varId\":%u,\"val\":%u}", (unsigned)varId, (unsigned)value);
+    MpNet_SendJson(MP_CH_WORLD_SYNC, MP_PEER_HOST, json);
 }
 
 void MpWorldSync_HandlePacket(uint16_t fromPeerId, uint8_t opcode, const void *payload, uint16_t len)

@@ -38,7 +38,7 @@ void FillPartnerParty(u16 trainerId)
         s32 lastIndex = AreMultiPartiesFullTeams() ? PARTY_SIZE : MULTI_PARTY_SIZE;
 
         const struct Trainer *partner = GetTrainerStructFromId(trainerId);
-        struct TrainerGenerator partnerGen;
+        struct TrainerGenerator partnerGen = {0};
         MakePartnerGenerator(&partnerGen, partner);
         if (trainerId == TRAINER_PARTNER(PARTNER_STEVEN))
             partnerGen.otID = OTID_STRUCT_PRESET(STEVEN_OTID);

@@ -553,6 +553,12 @@ static void ApplyMpTrainerPartyHooks(struct Pokemon *party, u16 trainerId)
             u8 dynamaxBlock = BLOCK_AI_DYNAMAX;
             SetMonData(&party[i], MON_DATA_DYNAMAX_LEVEL, &dynamaxBlock);
         }
+
+        if (!CheckBagHasItem(ITEM_TERA_ORB, 1))
+        {
+            u8 teraBlock = TYPE_MYSTERY;
+            SetMonData(&party[i], MON_DATA_TERA_TYPE, &teraBlock);
+        }
     }
 }
 

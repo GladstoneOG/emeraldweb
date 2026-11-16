@@ -30,6 +30,7 @@ static bool sTradeCommitted = false;
 static bool sSnapshotLoaded = false;
 static bool sResetNewGameRequested = false;
 static int sResetNewGameMode = 0;
+static bool sReturnToTitleRequested = false;
 
 /* Dynamic set of function pointers tagged with requests_effects=1 */
 #define WASM_MAX_EFFECT_FUNCS 1024
@@ -64,6 +65,11 @@ __attribute__((weak)) void MpNet_OnSpeedChangedFromBridge(int speed)
 __attribute__((weak)) bool MpOverworld_SaveGameNow(void)
 {
     return false;
+}
+
+__attribute__((weak)) bool MpOverworld_SaveGameForLogout(void)
+{
+    return MpOverworld_SaveGameNow();
 }
 
 __attribute__((weak)) void MpNet_UpdatePeerMeta(uint8_t slotIndex, uint16_t peerId, bool connected, uint8_t pairTag, const char *name)
@@ -349,6 +355,13 @@ bool WasmMp_ConsumeResetNewGameRequest(int *outMode)
     return true;
 }
 
+bool WasmMp_ConsumeReturnToTitleRequest(void)
+{
+    bool v = sReturnToTitleRequested;
+    sReturnToTitleRequested = false;
+    return v;
+}
+
 /* =========================================================================
  * Exported JS Entry Points (called directly by public/net_bridge.js)
  * ========================================================================= */
@@ -437,6 +450,17 @@ WASM_KEEPALIVE void mp_reset_new_game(int mode)
 {
     sResetNewGameMode = mode;
     sResetNewGameRequested = true;
+}
+
+WASM_KEEPALIVE int mp_return_to_title_screen(int autosave)
+{
+    bool saved = false;
+    if (autosave != 0)
+        saved = MpOverworld_SaveGameForLogout();
+    sResetNewGameRequested = false;
+    sSnapshotLoaded = false;
+    sReturnToTitleRequested = true;
+    return saved ? 1 : 0;
 }
 
 WASM_KEEPALIVE int mp_save_game_now(void)

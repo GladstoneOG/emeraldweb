@@ -40,6 +40,9 @@
 #include "title_screen.h"
 #include "window.h"
 #include "mystery_gift_menu.h"
+#ifdef WASM_PLATFORM
+#include "mp_overworld.h"
+#endif
 
 /*
  * Main menu state machine
@@ -1635,6 +1638,9 @@ static void Task_NewGameBirchSpeech_StartNamingScreen(u8 taskId)
         FreeAllWindowBuffers();
         FreeAndDestroyMonPicSprite(gTasks[taskId].tLotadSpriteId);
         NewGameBirchSpeech_SetDefaultPlayerName(Random() % NUM_PRESET_NAMES);
+#ifdef WASM_PLATFORM
+        MpOverworld_ApplyLobbyNameIfPresent();
+#endif
         DestroyTask(taskId);
         DoNamingScreen(NAMING_SCREEN_PLAYER, gSaveBlock2Ptr->playerName, gSaveBlock2Ptr->playerGender, 0, 0, CB2_NewGameBirchSpeech_ReturnFromNamingScreen);
     }

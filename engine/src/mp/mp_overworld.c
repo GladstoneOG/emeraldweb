@@ -358,6 +358,18 @@ static void DespawnRemoteSlot(uint8_t slot)
     ClearPeerWaypointQueue(slot);
 }
 
+static bool IsShiftedCoordWithinViewport(s16 shiftedX, s16 shiftedY)
+{
+    if (!gSaveBlock1Ptr)
+        return false;
+
+    s16 left = (s16)(gSaveBlock1Ptr->pos.x - 2);
+    s16 right = (s16)(gSaveBlock1Ptr->pos.x + MAP_OFFSET_W + 2);
+    s16 top = gSaveBlock1Ptr->pos.y;
+    s16 bottom = (s16)(gSaveBlock1Ptr->pos.y + MAP_OFFSET_H + 2);
+    return shiftedX >= left && shiftedX <= right && shiftedY >= top && shiftedY <= bottom;
+}
+
 static void SyncRemoteSprites(void)
 {
     if (!IsInFreeOverworld() || !gSaveBlock1Ptr)
@@ -392,6 +404,10 @@ static void SyncRemoteSprites(void)
         uint8_t localId = (uint8_t)(MP_REMOTE_LOCALID_BASE + slot);
         s16 spawnShiftedX = (s16)(resolvedX + MAP_OFFSET);
         s16 spawnShiftedY = (s16)(resolvedY + MAP_OFFSET);
+        if (!IsShiftedCoordWithinViewport(spawnShiftedX, spawnShiftedY)) {
+            DespawnRemoteSlot(slot);
+            continue;
+        }
         uint16_t spawnGfxId = SanitizeRemoteGfx(peer->pos.graphicsId, peer->pos.gender, peer->pos.movementState);
 
         u8 objId = OBJECT_EVENTS_COUNT;
@@ -593,7 +609,8 @@ static void SyncRemoteSprites(void)
         s16 fTargetX = (s16)(wp->followerX + mapShiftX + MAP_OFFSET);
         s16 fTargetY = (s16)(wp->followerY + mapShiftY + MAP_OFFSET);
         if (fTargetX < 0 || fTargetY < 0 ||
-            fTargetX >= gBackupMapLayout.width || fTargetY >= gBackupMapLayout.height) {
+            fTargetX >= gBackupMapLayout.width || fTargetY >= gBackupMapLayout.height ||
+            !IsShiftedCoordWithinViewport(fTargetX, fTargetY)) {
             DespawnRemoteFollowerSlot(slot);
             continue;
         }
@@ -827,9 +844,29 @@ bool MpOverworld_ExecuteWarp(int8_t mapGroup, int8_t mapNum, int16_t x, int16_t 
     if (!CanWarpSafelyNow())
         return false;
 
+    const struct MapHeader *destHeader = Overworld_GetMapHeaderByGroupAndId((u8)mapGroup, (u8)mapNum);
+    int16_t clampedX = x;
+    int16_t clampedY = y;
+    if (clampedX < 0)
+        clampedX = 0;
+    if (clampedY < 0)
+        clampedY = 0;
+    if (destHeader != NULL && destHeader->mapLayout != NULL) {
+        int16_t maxW = (int16_t)(destHeader->mapLayout->width - 1);
+        int16_t maxH = (int16_t)(destHeader->mapLayout->height - 1);
+        if (maxW >= 0 && clampedX > maxW)
+            clampedX = maxW;
+        if (maxH >= 0 && clampedY > maxH)
+            clampedY = maxH;
+    }
+    if (clampedX > 127)
+        clampedX = 127;
+    if (clampedY > 127)
+        clampedY = 127;
+
     sPendingWarpActive = false;
     MpOverworld_ClearRemoteSprites();
-    SetWarpDestination(mapGroup, mapNum, WARP_ID_NONE, (s8)x, (s8)y);
+    SetWarpDestination(mapGroup, mapNum, WARP_ID_NONE, (s8)clampedX, (s8)clampedY);
     DoTeleportTileWarp();
     return true;
 }
@@ -936,7 +973,40 @@ bool MpOverworld_SaveGameNow(void)
     return false;
 }
 
-static void ApplyLobbyNameIfPresent(void)
+bool MpOverworld_SaveGameForLogout(void)
+{
+    if (!sHasEnteredGameplay || !gSaveBlock1Ptr || !gSaveBlock2Ptr)
+        return false;
+
+    int8_t mapGroup = gSaveBlock1Ptr->location.mapGroup;
+    int8_t mapNum = gSaveBlock1Ptr->location.mapNum;
+    if (mapGroup == MAP_GROUP(MAP_INSIDE_OF_TRUCK) && mapNum == MAP_NUM(MAP_INSIDE_OF_TRUCK))
+        return false;
+
+    if (!gMain.inBattle && gMain.callback2 == CB2_Overworld &&
+        gPlayerAvatar.objectEventId < OBJECT_EVENTS_COUNT &&
+        gObjectEvents[gPlayerAvatar.objectEventId].active) {
+        s16 destX = 0;
+        s16 destY = 0;
+        PlayerGetDestCoords(&destX, &destY);
+        gSaveBlock1Ptr->pos.x = (s16)(destX - MAP_OFFSET);
+        gSaveBlock1Ptr->pos.y = (s16)(destY - MAP_OFFSET);
+    }
+
+    if (!gMain.inBattle)
+        MpOverworld_ClearRemoteSprites();
+
+    u8 mode = gDifferentSaveFile ? SAVE_OVERWRITE_DIFFERENT_FILE : SAVE_NORMAL;
+    u8 status = TrySavingData(mode);
+    if (status == SAVE_STATUS_OK) {
+        gDifferentSaveFile = FALSE;
+        MpOverworld_NotifyFlashSaved();
+        return true;
+    }
+    return false;
+}
+
+void MpOverworld_ApplyLobbyNameIfPresent(void)
 {
     const MpPeerState *selfPeer = MpNet_GetPeerState(MpNet_GetLocalSlot());
     if (!selfPeer || selfPeer->name[0] == '\0' || !gSaveBlock2Ptr)
@@ -951,10 +1021,19 @@ static void ApplyLobbyNameIfPresent(void)
             gSaveBlock2Ptr->playerName[i] = (u8)(CHAR_a + (ch - 'a'));
         else if (ch >= '0' && ch <= '9')
             gSaveBlock2Ptr->playerName[i] = (u8)(CHAR_0 + (ch - '0'));
+        else if (ch == '-')
+            gSaveBlock2Ptr->playerName[i] = CHAR_HYPHEN;
+        else if (ch == '.')
+            gSaveBlock2Ptr->playerName[i] = CHAR_PERIOD;
         else
             gSaveBlock2Ptr->playerName[i] = CHAR_SPACE;
     }
     gSaveBlock2Ptr->playerName[i] = EOS;
+}
+
+static void ApplyLobbyNameIfPresent(void)
+{
+    MpOverworld_ApplyLobbyNameIfPresent();
 }
 
 static void ResetGraphicsAndSaveBlocks(void)
@@ -1102,6 +1181,37 @@ void MpOverworld_ResetToNewGame(bool skipIntro)
     NewGameInitData();
     NewGameBirchSpeech_SetDefaultPlayerName(0);
     ApplyLobbyNameIfPresent();
+    ScriptContext_Init();
+    UnlockPlayerFieldControls();
+    gFieldCallback = NULL;
+    gFieldCallback2 = NULL;
+    SetMainCallback2(CB2_InitTitleScreen);
+}
+
+void MpOverworld_ReturnToTitleScreen(void)
+{
+    MpOverworld_ClearRemoteSprites();
+    sPendingWarpActive = false;
+    sPendingAutoSaveDelay = 0;
+    sHasLastSentPos = false;
+    memset(&sLastSentPos, 0, sizeof(sLastSentPos));
+    sHasAutoSaveBaseline = false;
+    sLastAutoSaveGroup = -1;
+    sLastAutoSaveNum = -1;
+    sWasInBattle = false;
+    sHasEnteredGameplay = false;
+    sHasSentFullState = false;
+    sLastFullStateSig = 0;
+    sLastFullReportTick = 0;
+
+    MpBattle2v2_Init();
+    MpNet_SetLocalInBattle(false);
+    MpWorldSync_Init();
+    MpCutscene_Init();
+    MpSoulLink_ResetRun();
+
+    ResetGraphicsAndSaveBlocks();
+    LoadGameSave(SAVE_NORMAL);
     ScriptContext_Init();
     UnlockPlayerFieldControls();
     gFieldCallback = NULL;
@@ -1588,8 +1698,10 @@ void MpOverworld_OnFrame(void)
             return;
     }
 
-    if ((sOwTick % 30u) == 0u && IsInFreeOverworld())
+    if ((sOwTick % 30u) == 0u && IsInFreeOverworld()) {
         MpWorldSync_CheckFlushDeferred();
+        TrySpawnObjectEvents(0, 0);
+    }
 
     int8_t mapGroup = 0;
     int8_t mapNum = 0;
@@ -1729,7 +1841,10 @@ void MpOverworld_HandlePacket(uint16_t fromPeerId, uint8_t opcode, const void *p
                     peer->peerId = fromPeerId;
                 peer->hasPosition = true;
                 peer->pos = pkt;
-                PushPeerWaypoint(pkt.slotIndex, &pkt);
+                if (sSpawnedActive[pkt.slotIndex])
+                    PushPeerWaypoint(pkt.slotIndex, &pkt);
+                else
+                    ClearPeerWaypointQueue(pkt.slotIndex);
                 if (!MpNet_HasAuthoritativePairTag(pkt.slotIndex))
                     peer->partyPairTag = pkt.partyTag;
             }

@@ -7,6 +7,7 @@
 #include "battle_interface.h"
 #include "battle_message.h"
 #include "battle_z_move.h"
+#include "battle_gimmick.h"
 #include "battle_scripts.h"
 #include "battle_stat_change.h"
 #include "graphics.h"
@@ -113,12 +114,8 @@ bool32 IsZMove(enum Move move)
 bool32 CanUseZMove(enum BattlerId battler)
 {
     enum HoldEffect holdEffect = GetBattlerHoldEffectIgnoreNegation(battler);
-    enum BattlerPosition position = GetBattlerPosition(battler);
 
-    // Check if Player has Z-Power Ring.
-    if (!TESTING && (position == B_POSITION_PLAYER_LEFT
-        || (!(gBattleTypeFlags & BATTLE_TYPE_MULTI) && position == B_POSITION_PLAYER_RIGHT))
-        && !CheckBagHasItem(ITEM_Z_POWER_RING, 1))
+    if (!CanBattlerUseCampaignGimmick(battler, ITEM_Z_POWER_RING))
         return FALSE;
 
     // Add '| BATTLE_TYPE_FRONTIER' to below if issues occur
