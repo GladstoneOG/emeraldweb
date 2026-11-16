@@ -2,9 +2,9 @@
   "assets": {
     "index.wasm": {
       "file": "index.wasm",
-      "version": "af304ba48189",
-      "sha256": "af304ba48189d8bfff8274430db7f14da0d541a6817f499eed4fb2100f275527",
-      "totalBytes": 27461546,
+      "version": "65312cab414a",
+      "sha256": "65312cab414ab161e97057c52a81d401865dbc85136fbf1b2096e400fd25edb5",
+      "totalBytes": 27461848,
       "chunkSize": 19922944,
       "chunks": [
         "chunks/index.wasm.part00",
