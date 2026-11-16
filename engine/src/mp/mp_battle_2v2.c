@@ -40,6 +40,10 @@ extern u8 GetFirstFaintedPartyIndex(enum BattlerId battler);
 
 #define MP_BAT_MAX_ACTION_QUEUE 16u
 
+#define MP_BUSY_PROMPT_UNDECIDED  0u
+#define MP_BUSY_PROMPT_WAIT       1u
+#define MP_BUSY_PROMPT_PROCEED_AI 2u
+
 struct MpQueuedTurnAction {
     bool valid;
     struct MpBattleTurnActionPayload pkt;
@@ -102,6 +106,19 @@ struct MpBattleSessionState {
     bool lastBattleWasBridgeSynced;
     bool pendingCoopFallback;
     bool activeFallbackAiPartner;
+    uint64_t seedHash;
+    uint32_t randomizerFlags;
+    bool hasSeedSync;
+    uint64_t pendingSeedHash;
+    uint32_t pendingRandomizerFlags;
+    bool pendingHasSeedSync;
+    bool busyPromptPending;
+    uint8_t busyPromptChoice;
+    uint8_t busyPromptPartnerSlot;
+    uint16_t busyPromptTrainerId;
+    uint16_t busyPromptOpponentB;
+    bool busyPromptTwoOpponents;
+    uint32_t busyPromptBattleSeed;
 };
 
 static struct MpBattleSessionState sBattleSession;
@@ -161,6 +178,19 @@ static void ResetBattleSessionFields(bool preservePostBattleMeta)
     sBattleSession.bridgeLaunched = false;
     sBattleSession.pendingCoopFallback = false;
     sBattleSession.activeFallbackAiPartner = false;
+    sBattleSession.seedHash = 0;
+    sBattleSession.randomizerFlags = 0;
+    sBattleSession.hasSeedSync = false;
+    sBattleSession.pendingSeedHash = 0;
+    sBattleSession.pendingRandomizerFlags = 0;
+    sBattleSession.pendingHasSeedSync = false;
+    sBattleSession.busyPromptPending = false;
+    sBattleSession.busyPromptChoice = MP_BUSY_PROMPT_UNDECIDED;
+    sBattleSession.busyPromptPartnerSlot = 0xFF;
+    sBattleSession.busyPromptTrainerId = 0;
+    sBattleSession.busyPromptOpponentB = 0xFFFF;
+    sBattleSession.busyPromptTwoOpponents = false;
+    sBattleSession.busyPromptBattleSeed = 0;
     ResetRemotePartyCache();
     memset(sBattleSession.remoteActions, 0, sizeof(sBattleSession.remoteActions));
     memset(sBattleSession.remoteSwitches, 0, sizeof(sBattleSession.remoteSwitches));
@@ -746,6 +776,8 @@ static void SendBattleStartPacket(uint8_t mode, uint32_t seed, uint16_t trainerI
     startPkt.trainerId = trainerId;
     startPkt.species[0] = opponentB;
     startPkt.levels[0] = twoOpponents ? 1u : 0u;
+    startPkt.seedHash = MpRandomizer_GetRunSeed();
+    startPkt.randomizerFlags = MpRandomizer_GetFlags();
     MpNet_SendBinary(MP_CH_BATTLE, targetPeer, MP_PKT_BAT_START, &startPkt, (uint16_t)sizeof(startPkt));
     SendLocalPartyChunks(mode, seed, targetPeer);
 }
@@ -794,6 +826,132 @@ static void AbortPendingRemoteLaunch(uint16_t targetPeer, uint32_t launchSeed, c
     sBattleSession.lastCanceledSeedTtl = 180u;
 }
 
+void MpBattle2v2_VerifySyncedSeedBeforeTrainerBuild(void)
+{
+    uint64_t syncHash = 0;
+    uint32_t syncFlags = 0;
+    MpRunConfig *cfg;
+
+    if (sBattleSession.active && sBattleSession.hasSeedSync && sBattleSession.seedHash != 0)
+    {
+        syncHash = sBattleSession.seedHash;
+        syncFlags = sBattleSession.randomizerFlags;
+    }
+    else if (sBattleSession.pendingLaunch && sBattleSession.pendingHasSeedSync && sBattleSession.pendingSeedHash != 0)
+    {
+        syncHash = sBattleSession.pendingSeedHash;
+        syncFlags = sBattleSession.pendingRandomizerFlags;
+    }
+    else
+    {
+        return;
+    }
+
+    cfg = MpNet_GetRunConfigMutable();
+    if (cfg != NULL)
+    {
+        cfg->seedHash = syncHash;
+        cfg->randomizerFlags = syncFlags;
+        MpRandomizer_OnRunConfigChanged(cfg);
+    }
+}
+
+static void AttachFallbackAiPartnerFlags(uint32_t *battleTypeFlags, uint32_t seed);
+
+static void LaunchCoop2v2SessionFromTrainer(uint32_t seed, uint16_t trainerId,
+                                           uint16_t opponentB, bool twoOpponents,
+                                           uint8_t coopPartner, uint16_t partnerPeer,
+                                           uint32_t *battleTypeFlags)
+{
+    ResetBattleSessionFields(false);
+    sBattleSession.active = true;
+    sBattleSession.isInitiator = true;
+    sBattleSession.mode = MP_BATTLE_COOP_2V2;
+    sBattleSession.battleSeed = seed;
+    sBattleSession.trainerId = trainerId;
+    sBattleSession.twoOpponents = twoOpponents;
+    sBattleSession.opponentB = opponentB;
+    sBattleSession.partnerSlot = coopPartner;
+    sBattleSession.partnerPeerId = partnerPeer;
+    sBattleSession.seedHash = MpRandomizer_GetRunSeed();
+    sBattleSession.randomizerFlags = MpRandomizer_GetFlags();
+    sBattleSession.hasSeedSync = true;
+
+    SeedDeterministicBattleRng(seed);
+    PopulateFallbackPartnerOrPvpParty(B_TRAINER_PARTNER, seed);
+    if (!twoOpponents)
+        TRAINER_BATTLE_PARAM.opponentB = 0xFFFF;
+    if (gPartnerTrainerId == 0 || gPartnerTrainerId == TRAINER_PARTNER(PARTNER_NONE))
+        gPartnerTrainerId = TRAINER_PARTNER(PARTNER_STEVEN);
+    if (battleTypeFlags != NULL)
+        *battleTypeFlags |= BATTLE_TYPE_DOUBLE | BATTLE_TYPE_MULTI | BATTLE_TYPE_INGAME_PARTNER;
+
+    SendBattleStartPacket(MP_BATTLE_COOP_2V2, seed, trainerId, opponentB, twoOpponents, partnerPeer);
+}
+
+static void PollBusyTrainerPrompt(void)
+{
+    uint8_t explicitPair;
+    uint8_t coopPartner;
+    const MpPeerState *ps;
+    const char *busyReason;
+    uint16_t partnerPeer;
+
+    if (!sBattleSession.busyPromptPending)
+        return;
+
+    explicitPair = MpNet_FindExplicitPairSlot();
+    if (explicitPair == 0xFF)
+        return;
+
+    coopPartner = MpNet_GetCoopPartnerSlot();
+    ps = MpNet_GetPeerState(explicitPair);
+    busyReason = MpOverworld_GetPeerBusyReason(explicitPair);
+    partnerPeer = (ps != NULL && ps->connected) ? ps->peerId : 0;
+
+    if (busyReason == NULL && coopPartner == explicitPair && partnerPeer != 0)
+    {
+        uint32_t seed = (sBattleSession.busyPromptBattleSeed != 0) ? sBattleSession.busyPromptBattleSeed : 0x20260401u;
+        uint16_t trainerId = sBattleSession.busyPromptTrainerId;
+        uint16_t opponentB = sBattleSession.busyPromptOpponentB;
+        bool twoOpponents = sBattleSession.busyPromptTwoOpponents;
+
+        LaunchCoop2v2SessionFromTrainer(seed, trainerId, opponentB, twoOpponents,
+                                        coopPartner, partnerPeer, &gBattleTypeFlags);
+#ifdef WASM_PLATFORM
+        WasmMp_NotifyBusyPromptResolved();
+#endif
+    }
+}
+
+bool MpBattle2v2_WaitForBusyTrainerPrompt(void)
+{
+    PollBusyTrainerPrompt();
+    return !sBattleSession.busyPromptPending;
+}
+
+void MpBattle2v2_ResolveBusyPrompt(int choice)
+{
+    uint32_t seed;
+
+    if (!sBattleSession.busyPromptPending)
+        return;
+    if (choice == 0)
+    {
+        sBattleSession.busyPromptChoice = MP_BUSY_PROMPT_WAIT;
+        return;
+    }
+
+    seed = (sBattleSession.busyPromptBattleSeed != 0) ? sBattleSession.busyPromptBattleSeed : 0x20260401u;
+    sBattleSession.busyPromptPending = false;
+    sBattleSession.busyPromptChoice = MP_BUSY_PROMPT_UNDECIDED;
+    SeedDeterministicBattleRng(seed);
+    AttachFallbackAiPartnerFlags(&gBattleTypeFlags, seed);
+#ifdef WASM_PLATFORM
+    WasmMp_NotifyBusyPromptResolved();
+#endif
+}
+
 void MpBattle2v2_Init(void)
 {
     if (sBattleSession.initialized)
@@ -822,6 +980,10 @@ void MpBattle2v2_StepFrame(void)
             sBattleSession.lastCanceledSeed = 0;
     }
 
+    PollBusyTrainerPrompt();
+    if (sBattleSession.active && !sBattleSession.isInitiator && sBattleSession.hasSeedSync && sBattleSession.seedHash != 0)
+        MpBattle2v2_VerifySyncedSeedBeforeTrainerBuild();
+
     if (sBattleSession.pendingLaunch)
     {
         uint32_t launchSeed = sBattleSession.pendingSeed;
@@ -848,7 +1010,7 @@ void MpBattle2v2_StepFrame(void)
         }
         bool needsRemoteParty = (launchMode == MP_BATTLE_COOP_2V2 || launchMode == MP_BATTLE_PVP) && (targetPeer != 0);
 
-        if (gMain.inBattle || sBattleSession.active || sBattleSession.activeFallbackAiPartner)
+        if (gMain.inBattle || sBattleSession.active || sBattleSession.activeFallbackAiPartner || sBattleSession.busyPromptPending)
         {
             if (sBattleSession.pendingFromRemote && (launchMode == MP_BATTLE_COOP_2V2 || launchMode == MP_BATTLE_PVP))
                 SendDeclineBusy((targetPeer != 0) ? targetPeer : MP_PEER_BROADCAST, "in_battle");
@@ -1065,37 +1227,37 @@ void MpBattle2v2_ConfigureTrainerBattleFlags(uint16_t trainerId, uint32_t *battl
         if (busyReason != NULL || coopPartner != explicitPair || partnerPeer == 0)
         {
 #ifdef WASM_PLATFORM
-            WasmMp_NotifyTeammateBusy((int)explicitPair, (busyReason != NULL) ? busyReason : "busy");
-#endif
+            const char *promptReason = (busyReason != NULL) ? busyReason : ((partnerPeer == 0) ? "not_ready" : "busy");
+            bool twoOpponents = (*battleTypeFlags & BATTLE_TYPE_TWO_OPPONENTS) != 0;
+            uint16_t opponentB = twoOpponents ? TRAINER_BATTLE_PARAM.opponentB : 0xFFFFu;
+
+            ResetBattleSessionFields(false);
+            sBattleSession.battleSeed = seed;
+            sBattleSession.busyPromptPending = true;
+            sBattleSession.busyPromptChoice = MP_BUSY_PROMPT_UNDECIDED;
+            sBattleSession.busyPromptPartnerSlot = explicitPair;
+            sBattleSession.busyPromptTrainerId = trainerId;
+            sBattleSession.busyPromptTwoOpponents = twoOpponents;
+            sBattleSession.busyPromptOpponentB = opponentB;
+            if (!twoOpponents)
+                TRAINER_BATTLE_PARAM.opponentB = 0xFFFF;
+            sBattleSession.busyPromptBattleSeed = seed;
+            SeedDeterministicBattleRng(seed);
+            WasmMp_PromptTeammateBusy((int)explicitPair, promptReason);
+            return;
+#else
             SeedDeterministicBattleRng(seed);
             AttachFallbackAiPartnerFlags(battleTypeFlags, seed);
             return;
+#endif
         }
 
         {
             bool twoOpponents = (*battleTypeFlags & BATTLE_TYPE_TWO_OPPONENTS) != 0;
             uint16_t opponentB = twoOpponents ? TRAINER_BATTLE_PARAM.opponentB : 0xFFFFu;
 
-            ResetBattleSessionFields(false);
-            sBattleSession.active = true;
-            sBattleSession.isInitiator = true;
-            sBattleSession.mode = MP_BATTLE_COOP_2V2;
-            sBattleSession.battleSeed = seed;
-            sBattleSession.trainerId = trainerId;
-            sBattleSession.twoOpponents = twoOpponents;
-            sBattleSession.opponentB = opponentB;
-            sBattleSession.partnerSlot = coopPartner;
-            sBattleSession.partnerPeerId = partnerPeer;
-
-            SeedDeterministicBattleRng(seed);
-            PopulateFallbackPartnerOrPvpParty(B_TRAINER_PARTNER, seed);
-            if (!twoOpponents)
-                TRAINER_BATTLE_PARAM.opponentB = 0xFFFF;
-            if (gPartnerTrainerId == 0 || gPartnerTrainerId == TRAINER_PARTNER(PARTNER_NONE))
-                gPartnerTrainerId = TRAINER_PARTNER(PARTNER_STEVEN);
-            *battleTypeFlags |= BATTLE_TYPE_MULTI | BATTLE_TYPE_INGAME_PARTNER;
-
-            SendBattleStartPacket(MP_BATTLE_COOP_2V2, seed, trainerId, opponentB, twoOpponents, partnerPeer);
+            LaunchCoop2v2SessionFromTrainer(seed, trainerId, opponentB, twoOpponents,
+                                            coopPartner, partnerPeer, battleTypeFlags);
         }
     }
     else if (MpBattle2v2_CountAlivePlayerMons() <= 1)
@@ -1253,6 +1415,9 @@ void MpBattle2v2_StartSyncedBattle(uint32_t battleSeed, uint8_t mode, uint16_t t
     uint8_t savedPartnerSlot = sBattleSession.pendingPartnerSlot;
     uint16_t savedPartnerPeer = sBattleSession.pendingPartnerPeerId;
     bool coopFallback = sBattleSession.pendingCoopFallback;
+    uint64_t savedSeedHash = sBattleSession.pendingSeedHash;
+    uint32_t savedRandomizerFlags = sBattleSession.pendingRandomizerFlags;
+    bool savedHasSeedSync = sBattleSession.pendingHasSeedSync;
 
     MpBattle2v2_Init();
     sBattleSession.pendingLaunch = false;
@@ -1341,6 +1506,20 @@ void MpBattle2v2_StartSyncedBattle(uint32_t battleSeed, uint8_t mode, uint16_t t
     sBattleSession.partnerPeerId = targetPeer;
     sBattleSession.localCommitMask = 0;
     memset(sBattleSession.remoteActions, 0, sizeof(sBattleSession.remoteActions));
+    if (savedHasSeedSync && savedSeedHash != 0)
+    {
+        sBattleSession.seedHash = savedSeedHash;
+        sBattleSession.randomizerFlags = savedRandomizerFlags;
+        sBattleSession.hasSeedSync = true;
+    }
+    else
+    {
+        sBattleSession.seedHash = MpRandomizer_GetRunSeed();
+        sBattleSession.randomizerFlags = MpRandomizer_GetFlags();
+        sBattleSession.hasSeedSync = (sBattleSession.seedHash != 0);
+    }
+    if (fromRemote && sBattleSession.hasSeedSync && sBattleSession.seedHash != 0)
+        MpBattle2v2_VerifySyncedSeedBeforeTrainerBuild();
 
     SeedDeterministicBattleRng(sBattleSession.battleSeed);
     if (mode == MP_BATTLE_PVP)
@@ -2359,6 +2538,12 @@ void MpBattle2v2_HandlePacket(uint16_t fromPeerId, uint8_t opcode, const void *p
             SendLocalPartyChunks(pkt->mode, pkt->battleSeed, replyPeer);
             return;
         }
+        if (sBattleSession.busyPromptPending)
+        {
+            if (pkt->mode == MP_BATTLE_COOP_2V2 || pkt->mode == MP_BATTLE_PVP)
+                SendDeclineBusy(replyPeer, "busy");
+            return;
+        }
         if (sBattleSession.active || gMain.inBattle || sBattleSession.activeFallbackAiPartner)
         {
             if (pkt->mode == MP_BATTLE_COOP_2V2 || pkt->mode == MP_BATTLE_PVP)
@@ -2383,6 +2568,13 @@ void MpBattle2v2_HandlePacket(uint16_t fromPeerId, uint8_t opcode, const void *p
             }
             sBattleSession.pendingPartnerSlot = pkt->partnerSlot;
             sBattleSession.pendingPartnerPeerId = replyPeer;
+            if (pkt->seedHash != 0)
+            {
+                sBattleSession.pendingSeedHash = pkt->seedHash;
+                sBattleSession.pendingRandomizerFlags = pkt->randomizerFlags;
+                sBattleSession.pendingHasSeedSync = true;
+                MpBattle2v2_VerifySyncedSeedBeforeTrainerBuild();
+            }
             if (MpOverworld_CanJoinSyncedBattleNow())
             {
                 sBattleSession.pendingPartySent = true;
@@ -2410,6 +2602,19 @@ void MpBattle2v2_HandlePacket(uint16_t fromPeerId, uint8_t opcode, const void *p
         sBattleSession.pendingPartyWaitFrames = 0;
         sBattleSession.pendingFromRemote = true;
         sBattleSession.pendingWaitSent = true;
+        if (pkt->seedHash != 0)
+        {
+            sBattleSession.pendingSeedHash = pkt->seedHash;
+            sBattleSession.pendingRandomizerFlags = pkt->randomizerFlags;
+            sBattleSession.pendingHasSeedSync = true;
+            MpBattle2v2_VerifySyncedSeedBeforeTrainerBuild();
+        }
+        else
+        {
+            sBattleSession.pendingSeedHash = 0;
+            sBattleSession.pendingRandomizerFlags = 0;
+            sBattleSession.pendingHasSeedSync = false;
+        }
         if (MpOverworld_CanJoinSyncedBattleNow())
         {
             sBattleSession.pendingPartySent = true;
@@ -2686,7 +2891,7 @@ void MpBattle2v2_StartSyncedFromBridge(uint32_t battleSeed, uint8_t mode, uint8_
     MpBattle2v2_Init();
     if (!MpWorldSync_IsLocalTutorialComplete())
         return;
-    if (gMain.inBattle || sBattleSession.active || sBattleSession.activeFallbackAiPartner)
+    if (gMain.inBattle || sBattleSession.active || sBattleSession.activeFallbackAiPartner || sBattleSession.busyPromptPending)
         return;
 
     if (resolvedMode == MP_BATTLE_COOP_2V2)

@@ -1266,6 +1266,61 @@ body.sidebar-collapsed #soul-link-sidebar {
   background: #fff9e2;
 }
 
+.saves-auth-banner {
+  border-color: var(--em-teal);
+  background: #eef9f4;
+}
+
+.save-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  background: #e9e1c2;
+  border-bottom: 2px solid #9c9270;
+  font-family: var(--em-font-gba);
+  font-size: 10px;
+  font-weight: 700;
+  color: #154c3e;
+  text-transform: uppercase;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.save-group-empty {
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--em-ink-muted);
+  border-bottom: 1px solid #e4dbb9;
+  font-style: italic;
+}
+
+.slot-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.slot-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 2px;
+  border: 1px solid #a89d78;
+  background: #f8f4dc;
+  font-size: 10px;
+  color: var(--em-ink);
+}
+
+.slot-chip.mine {
+  border-color: var(--em-teal);
+  background: #d8f5ea;
+  font-weight: 700;
+}
+
 /* Trade Columns */
 .trade-split {
   display: grid;

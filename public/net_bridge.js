@@ -25,6 +25,7 @@
   const STORAGE_KEYS = {
     playerName: "pokemon_web_player_name",
     clientToken: "pokemon_web_client_token",
+    sessionToken: "pokemon_web_session_token",
     relayUrl: "pokemon_web_relay_url",
     keybinds: "pokemon_web_keybinds",
     audioMuted: "pokemon_web_audio_muted",
@@ -154,28 +155,45 @@
         return {
           runId: typeof parsed.runId === "string" ? parsed.runId : "",
           savedAtMs: Number(parsed.savedAtMs) || 0,
+          userId: typeof parsed.userId === "string" ? parsed.userId : "guest",
+          slotIndex: Number.isInteger(Number(parsed.slotIndex)) ? Number(parsed.slotIndex) : 0,
+          flashRev: Math.max(0, Math.floor(Number(parsed.flashRev) || 0)),
         };
       }
     } catch (_) {}
-    return { runId: "", savedAtMs: 0 };
+    return { runId: "", savedAtMs: 0, userId: "guest", slotIndex: 0, flashRev: 0 };
   }
 
-  function writeFlashSaveMeta(runId, savedAtMs) {
+  function writeFlashSaveMeta(runId, savedAtMs, extra) {
     try {
+      const prev = readFlashSaveMeta();
+      const ex = extra && typeof extra === "object" ? extra : {};
       localStorage.setItem(
         STORAGE_KEYS.flashSaveMeta,
         JSON.stringify({
-          runId: typeof runId === "string" ? runId : "",
+          runId: typeof runId === "string" ? runId : prev.runId,
           savedAtMs: Number(savedAtMs) || Date.now(),
+          userId: typeof ex.userId === "string" && ex.userId ? ex.userId : prev.userId || "guest",
+          slotIndex:
+            ex.slotIndex !== undefined && Number.isInteger(Number(ex.slotIndex))
+              ? Number(ex.slotIndex)
+              : prev.slotIndex || 0,
+          flashRev:
+            ex.flashRev !== undefined && Number.isFinite(Number(ex.flashRev))
+              ? Math.max(0, Math.floor(Number(ex.flashRev)))
+              : prev.flashRev || 0,
         })
       );
     } catch (_) {}
   }
 
-  function clearLocalFlashSave() {
+  function clearLocalFlashSave(options) {
+    const keepMeta = Boolean(options && options.keepMeta);
     try {
       localStorage.removeItem(STORAGE_KEYS.flashSave);
-      localStorage.removeItem(STORAGE_KEYS.flashSaveMeta);
+      if (!keepMeta) {
+        localStorage.removeItem(STORAGE_KEYS.flashSaveMeta);
+      }
     } catch (_) {}
     try {
       const m = global.PokemonWasmBridge && global.PokemonWasmBridge._getWasmModule
@@ -192,6 +210,8 @@
   const ASSET_STORE_NAME = "asset_packs";
   const RUN_DB_NAME = "pokemon_campaign_runs_db_v1";
   const RUN_STORE_NAME = "campaign_runs";
+  const FLASH_CACHE_DB_NAME = "pokemon_slot_flash_cache_v1";
+  const FLASH_CACHE_STORE_NAME = "slot_flash";
 
   const TRADE_EVOLUTIONS = {
     Kadabra: "Alakazam",
@@ -318,11 +338,63 @@
     return `${prefix}_${Date.now().toString(36)}_${rand}`;
   }
 
+  function normalizeSeedString(raw) {
+    return String(raw || "")
+      .replace(/[^\x20-\x7e]/g, "")
+      .trim()
+      .slice(0, 31);
+  }
+
   function randomSeedString() {
     const words = ["RAYQUAZA", "KYOGRE", "GROUDON", "HOENN", "EMERALD", "SOOTOPOLIS", "METEOR", "LATIOS"];
     const pick = words[Math.floor(Math.random() * words.length)];
     const num = Math.floor(1000 + Math.random() * 8999);
-    return `${pick}-${num}`;
+    return `${pick}-${num}`.slice(0, 31);
+  }
+
+  function normalizeRunConfig(cfg, fallbackCfg) {
+    const base = fallbackCfg || makeDefaultRunConfig();
+    const src = cfg && typeof cfg === "object" ? cfg : {};
+    const presetKey =
+      typeof src.randomizerPreset === "string" && RANDOMIZER_PRESETS[src.randomizerPreset]
+        ? src.randomizerPreset
+        : typeof base.randomizerPreset === "string" && RANDOMIZER_PRESETS[base.randomizerPreset]
+          ? base.randomizerPreset
+          : "balanced";
+    const presetToggles = RANDOMIZER_PRESETS[presetKey] || RANDOMIZER_PRESETS.balanced;
+    const rawToggles = src.randomizerToggles && typeof src.randomizerToggles === "object" ? src.randomizerToggles : {};
+    const normalizedToggles = {};
+    for (const k of Object.keys(RANDOMIZER_PRESETS.balanced)) {
+      normalizedToggles[k] = k in rawToggles ? Boolean(rawToggles[k]) : Boolean(presetToggles[k]);
+    }
+    const nuzPresetKey =
+      typeof src.nuzlockePreset === "string" && NUZLOCKE_PRESETS[src.nuzlockePreset]
+        ? src.nuzlockePreset
+        : typeof base.nuzlockePreset === "string" && NUZLOCKE_PRESETS[base.nuzlockePreset]
+          ? base.nuzlockePreset
+          : "standard_soullink";
+    const nuzPresetToggles = NUZLOCKE_PRESETS[nuzPresetKey] || NUZLOCKE_PRESETS.standard_soullink;
+    const rawNuzToggles = src.nuzlockeToggles && typeof src.nuzlockeToggles === "object" ? src.nuzlockeToggles : {};
+    const normalizedNuzToggles = {};
+    for (const k of Object.keys(NUZLOCKE_PRESETS.standard_soullink)) {
+      normalizedNuzToggles[k] = k in rawNuzToggles ? Boolean(rawNuzToggles[k]) : Boolean(nuzPresetToggles[k]);
+    }
+    const cleanSeed = normalizeSeedString(src.seed) || normalizeSeedString(base.seed) || randomSeedString();
+    return {
+      ...base,
+      ...src,
+      runId: String(src.runId || base.runId || generateId("run")).slice(0, 64),
+      roomName: String(src.roomName || base.roomName || "Hoenn Run").slice(0, 48),
+      seed: cleanSeed,
+      randomizerPreset: presetKey,
+      randomizerToggles: normalizedToggles,
+      nuzlockePreset: nuzPresetKey,
+      nuzlockeToggles: normalizedNuzToggles,
+      soulLinkMode: src.soulLinkMode === "group" ? "group" : "pairs",
+      battleAutoPull: Boolean(src.battleAutoPull),
+      speedMultiplier: [1, 2, 3].includes(Number(src.speedMultiplier)) ? Number(src.speedMultiplier) : 1,
+      gameOver: Boolean(src.gameOver),
+    };
   }
 
   function getOrCreateClientToken() {
@@ -570,6 +642,49 @@
         resolve(false);
       }
     });
+  }
+
+  function makeFlashCacheKey(userId, runId, slotIndex) {
+    const u = String(userId || "guest").trim() || "guest";
+    const r = String(runId || "solo").trim() || "solo";
+    const s = Number.isInteger(Number(slotIndex)) ? Number(slotIndex) : 0;
+    return `${u}::${r}::${s}`;
+  }
+
+  async function compressFlashBase64Gzip(rawB64) {
+    const bytes = decodeFlashBase64(rawB64);
+    if (!bytes) return "";
+    if (typeof CompressionStream === "undefined" || typeof Response === "undefined") {
+      return rawB64;
+    }
+    try {
+      const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"));
+      const compressed = new Uint8Array(await new Response(stream).arrayBuffer());
+      return "gz:" + encodeFlashBase64(compressed);
+    } catch (_) {
+      return rawB64;
+    }
+  }
+
+  async function decompressFlashPayloadToBase64(payloadStr) {
+    if (!payloadStr || typeof payloadStr !== "string") return "";
+    if (!payloadStr.startsWith("gz:")) {
+      const bytes = decodeFlashBase64(payloadStr);
+      return bytes ? encodeFlashBase64(bytes) : "";
+    }
+    if (typeof DecompressionStream === "undefined" || typeof Response === "undefined") {
+      return "";
+    }
+    try {
+      const bin = atob(payloadStr.slice(3));
+      const gzBytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) gzBytes[i] = bin.charCodeAt(i) & 0xff;
+      const stream = new Blob([gzBytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+      const rawBytes = new Uint8Array(await new Response(stream).arrayBuffer());
+      return hasValidSectorSignature(rawBytes) ? encodeFlashBase64(rawBytes) : "";
+    } catch (_) {
+      return "";
+    }
   }
 
   // --- Chunked Asset Pack Loader (supports tools/chunk_assets.py + brotatoweb manifests) ---
@@ -890,6 +1005,9 @@
       slotIndex: forcedIndex,
       peerId: Math.max(0, Math.floor(Number(p.peerId) || 0)),
       token: String(p.token || "").slice(0, 64),
+      userId: p.userId ? String(p.userId).slice(0, 64) : "",
+      username: p.username ? String(p.username).slice(0, 32) : "",
+      flashRev: Math.max(0, Math.floor(Number(p.flashRev) || 0)),
       name: String(p.name || base.name).slice(0, 20),
       connected: Boolean(p.connected),
       isHost: forcedIndex === 0,
@@ -915,6 +1033,9 @@
       slotIndex,
       peerId: slotIndex === 0 ? 1 : 0,
       token: "",
+      userId: "",
+      username: "",
+      flashRev: 0,
       name: slotIndex === 0 ? getOrCreatePlayerName() : `Slot ${slotIndex + 1}`,
       connected: false,
       isHost: slotIndex === 0,
@@ -956,6 +1077,12 @@
     p0.token = getOrCreateClientToken();
 
     return {
+      auth: {
+        status: "checking", // checking | signed_out | signed_in
+        userId: "",
+        username: "",
+        sessionToken: (typeof localStorage !== "undefined" && localStorage.getItem(STORAGE_KEYS.sessionToken)) || "",
+      },
       connection: {
         status: "offline", // offline | connecting | hosting | connected
         role: "solo",
@@ -1021,9 +1148,414 @@
       this.wasmCallbacks = {};
       this.remoteRooms = [];
       this.lanInfo = null;
+      this.cloudRuns = { hostedRuns: [], joinedRuns: [] };
       this._roomInfoTimer = null;
       this._pendingLateJoin = null;
+      this._pendingSlotClaim = null;
+      this._pendingRunConfigSync = null;
+      this._pendingWorldSync = null;
       this._joinOptions = { confirmedProgressed: false };
+      this._suppressLocalFlashSync = false;
+    }
+
+    _getEffectiveUserId() {
+      return (this.state.auth && this.state.auth.userId) || "guest";
+    }
+
+    async _apiFetch(path, options) {
+      const base = getRelayHttpBase();
+      const opts = options && typeof options === "object" ? { ...options } : {};
+      const headers = new Headers(opts.headers || {});
+      const tok =
+        (this.state.auth && this.state.auth.sessionToken) ||
+        (typeof localStorage !== "undefined" ? localStorage.getItem(STORAGE_KEYS.sessionToken) : "") ||
+        "";
+      if (tok && !headers.has("Authorization")) {
+        headers.set("Authorization", `Bearer ${tok}`);
+      }
+      if (opts.body && typeof opts.body === "object" && !(opts.body instanceof Uint8Array)) {
+        if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+        opts.body = JSON.stringify(opts.body);
+      }
+      opts.headers = headers;
+      opts.cache = "no-store";
+      try {
+        const res = await fetch(`${base}${path}`, opts);
+        const text = await res.text();
+        const data = text ? safeParseJson(text) : null;
+        return {
+          ok: res.ok,
+          status: res.status,
+          data,
+          error: (data && (data.error || data.message)) || (!res.ok ? `HTTP ${res.status}` : ""),
+        };
+      } catch (err) {
+        return { ok: false, status: 0, data: null, error: err && err.message ? err.message : "Network error" };
+      }
+    }
+
+    validateSession() {
+      const run = async () => {
+        const tok = typeof localStorage !== "undefined" ? localStorage.getItem(STORAGE_KEYS.sessionToken) || "" : "";
+        if (!tok) {
+          this.state.auth = { status: "signed_out", userId: "", username: "", sessionToken: "" };
+          this.emit("auth");
+          return false;
+        }
+        this.state.auth.sessionToken = tok;
+        const res = await this._apiFetch("/api/auth/me", { method: "GET" });
+        if (res.ok && res.data && res.data.userId) {
+          this.state.auth = {
+            status: "signed_in",
+            userId: String(res.data.userId),
+            username: String(res.data.username || ""),
+            sessionToken: tok,
+          };
+          const mySlot = this.state.players[this.state.connection.mySlotIndex];
+          if (mySlot) {
+            mySlot.userId = this.state.auth.userId;
+            mySlot.username = this.state.auth.username;
+          }
+          this.emit("auth");
+          await this.refreshCloudRuns();
+          return true;
+        }
+        if (res.status === 401 || res.status === 403) {
+          try {
+            localStorage.removeItem(STORAGE_KEYS.sessionToken);
+          } catch (_) {}
+          this.state.auth = { status: "signed_out", userId: "", username: "", sessionToken: "" };
+        } else {
+          this.state.auth.status = "signed_out";
+        }
+        this.emit("auth");
+        return false;
+      };
+      this._validateSessionPromise = run().finally(() => {
+        this._validateSessionPromise = null;
+      });
+      return this._validateSessionPromise;
+    }
+
+    async registerAccount(username, password) {
+      const res = await this._apiFetch("/api/auth/register", {
+        method: "POST",
+        body: { username: String(username || "").trim(), password: String(password || "") },
+      });
+      if (!res.ok || !res.data || !res.data.sessionToken) {
+        return { ok: false, error: res.error || "Registration failed" };
+      }
+      const { userId, username: cleanName, sessionToken } = res.data;
+      try {
+        localStorage.setItem(STORAGE_KEYS.sessionToken, sessionToken);
+      } catch (_) {}
+      this.state.auth = {
+        status: "signed_in",
+        userId: String(userId || ""),
+        username: String(cleanName || username || ""),
+        sessionToken: String(sessionToken),
+      };
+      const mySlot = this.state.players[this.state.connection.mySlotIndex];
+      if (mySlot) {
+        mySlot.userId = this.state.auth.userId;
+        mySlot.username = this.state.auth.username;
+      }
+      this.emit("auth");
+      await this.refreshCloudRuns();
+      return { ok: true, userId: this.state.auth.userId, username: this.state.auth.username };
+    }
+
+    async loginAccount(username, password) {
+      const res = await this._apiFetch("/api/auth/login", {
+        method: "POST",
+        body: { username: String(username || "").trim(), password: String(password || "") },
+      });
+      if (!res.ok || !res.data || !res.data.sessionToken) {
+        return { ok: false, error: res.error || "Invalid credentials" };
+      }
+      const { userId, username: cleanName, sessionToken } = res.data;
+      try {
+        localStorage.setItem(STORAGE_KEYS.sessionToken, sessionToken);
+      } catch (_) {}
+      this.state.auth = {
+        status: "signed_in",
+        userId: String(userId || ""),
+        username: String(cleanName || username || ""),
+        sessionToken: String(sessionToken),
+      };
+      const mySlot = this.state.players[this.state.connection.mySlotIndex];
+      if (mySlot) {
+        mySlot.userId = this.state.auth.userId;
+        mySlot.username = this.state.auth.username;
+      }
+      this.emit("auth");
+      await this.refreshCloudRuns();
+      return { ok: true, userId: this.state.auth.userId, username: this.state.auth.username };
+    }
+
+    async logoutAccount() {
+      if (this.state.auth && this.state.auth.sessionToken) {
+        await this._apiFetch("/api/auth/logout", { method: "POST" });
+      }
+      try {
+        localStorage.removeItem(STORAGE_KEYS.sessionToken);
+      } catch (_) {}
+      this.state.auth = { status: "signed_out", userId: "", username: "", sessionToken: "" };
+      this.cloudRuns = { hostedRuns: [], joinedRuns: [] };
+      const mySlot = this.state.players[this.state.connection.mySlotIndex];
+      if (mySlot) {
+        mySlot.userId = "";
+        mySlot.username = "";
+      }
+      this.emit("auth");
+      this.emit("saves");
+    }
+
+    async refreshCloudRuns() {
+      if (!this.state.auth || this.state.auth.status !== "signed_in") {
+        this.cloudRuns = { hostedRuns: [], joinedRuns: [] };
+        return this.cloudRuns;
+      }
+      const res = await this._apiFetch("/api/runs", { method: "GET" });
+      if (res.ok && res.data) {
+        this.cloudRuns = {
+          hostedRuns: Array.isArray(res.data.hostedRuns) ? res.data.hostedRuns : [],
+          joinedRuns: Array.isArray(res.data.joinedRuns) ? res.data.joinedRuns : [],
+        };
+        this.emit("saves");
+      }
+      return this.cloudRuns;
+    }
+
+    async cacheSlotFlashLocal(runId, slotIndex, rawFlashB64, flashRev, savedAtMs) {
+      if (!runId || !rawFlashB64) return false;
+      const bytes = decodeFlashBase64(rawFlashB64);
+      if (!hasValidSectorSignature(bytes)) return false;
+      const userId = this._getEffectiveUserId();
+      const sIdx = Number.isInteger(Number(slotIndex)) ? Number(slotIndex) : 0;
+      const key = makeFlashCacheKey(userId, runId, sIdx);
+      const existing = await idbGet(FLASH_CACHE_DB_NAME, FLASH_CACHE_STORE_NAME, key);
+      const nextRev = Math.max(
+        Number.isFinite(Number(flashRev)) ? Math.floor(Number(flashRev)) : 0,
+        existing ? Number(existing.flashRev) || 0 : 0
+      );
+      return idbPut(FLASH_CACHE_DB_NAME, FLASH_CACHE_STORE_NAME, key, {
+        key,
+        userId,
+        runId,
+        slotIndex: sIdx,
+        flashSaveB64: encodeFlashBase64(bytes),
+        flashRev: nextRev,
+        savedAtMs: Number(savedAtMs) || Date.now(),
+      });
+    }
+
+    async getCachedSlotFlashLocal(runId, slotIndex, explicitUserId) {
+      if (!runId) return null;
+      const userId = explicitUserId || this._getEffectiveUserId();
+      const sIdx = Number.isInteger(Number(slotIndex)) ? Number(slotIndex) : 0;
+      const primary = await idbGet(
+        FLASH_CACHE_DB_NAME,
+        FLASH_CACHE_STORE_NAME,
+        makeFlashCacheKey(userId, runId, sIdx)
+      );
+      if (primary && primary.flashSaveB64) return primary;
+      if (userId !== "guest") {
+        const guestFallback = await idbGet(
+          FLASH_CACHE_DB_NAME,
+          FLASH_CACHE_STORE_NAME,
+          makeFlashCacheKey("guest", runId, sIdx)
+        );
+        if (guestFallback && guestFallback.flashSaveB64) return guestFallback;
+      }
+      return null;
+    }
+
+    async flushActiveFlashToCache() {
+      const meta = readFlashSaveMeta();
+      if (!meta.runId) return false;
+      try {
+        const b64 = localStorage.getItem(STORAGE_KEYS.flashSave) || "";
+        const bytes = decodeFlashBase64(b64);
+        if (!hasValidSectorSignature(bytes)) return false;
+        const userId = meta.userId || this._getEffectiveUserId();
+        const sIdx = Number.isInteger(meta.slotIndex) ? meta.slotIndex : 0;
+        const key = makeFlashCacheKey(userId, meta.runId, sIdx);
+        return idbPut(FLASH_CACHE_DB_NAME, FLASH_CACHE_STORE_NAME, key, {
+          key,
+          userId,
+          runId: meta.runId,
+          slotIndex: sIdx,
+          flashSaveB64: encodeFlashBase64(bytes),
+          flashRev: meta.flashRev || 0,
+          savedAtMs: meta.savedAtMs || Date.now(),
+        });
+      } catch (_) {
+        return false;
+      }
+    }
+
+    async syncRunUpsertToBackend(explicitSnapshot) {
+      if (!this.state.auth || this.state.auth.status !== "signed_in") return null;
+      const snap = explicitSnapshot || null;
+      const cfg = (snap && snap.runConfig) || this.state.runConfig;
+      if (!cfg || !cfg.runId) return null;
+      const world = (snap && snap.world) || this.state.world;
+      const soulLink = (snap && snap.soulLink) || this.state.soulLink;
+      const players = (snap && snap.playerSlots) || this.state.players;
+      const hostSlotObj = players && players[0] ? players[0] : null;
+      const res = await this._apiFetch("/api/runs/upsert", {
+        method: "POST",
+        body: {
+          runId: cfg.runId,
+          title: cfg.roomName || "Hoenn Run",
+          seed: cfg.seed || "",
+          randomizerPreset: cfg.randomizerPreset || "balanced",
+          runConfig: cfg,
+          worldState: { world, soulLink },
+          hostSlot: hostSlotObj
+            ? {
+                slotIdx: 0,
+                userId: hostSlotObj.userId || this.state.auth.userId,
+                characterName: hostSlotObj.name || getOrCreatePlayerName(),
+                tutorialComplete: Boolean(hostSlotObj.tutorialComplete),
+                party: Array.isArray(hostSlotObj.party) ? hostSlotObj.party : [],
+                money: Number(hostSlotObj.money) || 0,
+                bagItems: Array.isArray(hostSlotObj.bagItems) ? hostSlotObj.bagItems : [],
+                flashRev: Number(hostSlotObj.flashRev) || 0,
+              }
+            : undefined,
+          slots: (players || []).map((p, idx) => ({
+            slotIdx: idx,
+            userId: p.userId || (idx === 0 ? this.state.auth.userId : ""),
+            characterName: p.name || `Slot ${idx + 1}`,
+            tutorialComplete: Boolean(p.tutorialComplete),
+            party: Array.isArray(p.party) ? p.party : [],
+            money: Number(p.money) || 0,
+            bagItems: Array.isArray(p.bagItems) ? p.bagItems : [],
+            flashRev: Number(p.flashRev) || 0,
+          })),
+        },
+      });
+      if (res.ok) {
+        this.refreshCloudRuns().catch(() => {});
+      }
+      return res;
+    }
+
+    async syncSlotFlashToBackend(runId, slotIndex, rawFlashB64, flashRev, slotObj, opts) {
+      if (!this.state.auth || this.state.auth.status !== "signed_in") return null;
+      if (!runId || !rawFlashB64) return null;
+      const sIdx = Number.isInteger(Number(slotIndex)) ? Number(slotIndex) : 0;
+      const compressed = await compressFlashBase64Gzip(rawFlashB64);
+      const isGzip = Boolean(compressed && compressed.startsWith("gz:"));
+      const slot = slotObj || this.state.players[sIdx] || {};
+      const body = {
+        flashSaveB64: isGzip ? compressed.slice(3) : rawFlashB64,
+        flashEncoding: isGzip ? "gzip" : "raw",
+        characterName: slot.name || getOrCreatePlayerName(),
+        tutorialComplete: Boolean(slot.tutorialComplete),
+        party: Array.isArray(slot.party) ? slot.party : [],
+        money: Number(slot.money) || 0,
+        bagItems: Array.isArray(slot.bagItems) ? slot.bagItems : [],
+        force: Boolean(opts && opts.force),
+      };
+      if (opts && Number.isFinite(Number(opts.expectedRev))) {
+        body.expectedRev = Math.max(0, Math.floor(Number(opts.expectedRev)));
+      }
+      if (slot.userId) {
+        body.userId = slot.userId;
+      }
+      const res = await this._apiFetch(`/api/runs/${encodeURIComponent(runId)}/slot/${sIdx}/flash`, {
+        method: "POST",
+        body,
+      });
+      if (res.ok && res.data && Number.isFinite(Number(res.data.flashRev))) {
+        const nextRev = Number(res.data.flashRev);
+        if (slot) slot.flashRev = Math.max(slot.flashRev || 0, nextRev);
+        writeFlashSaveMeta(runId, Date.now(), {
+          userId: this._getEffectiveUserId(),
+          slotIndex: sIdx,
+          flashRev: nextRev,
+        });
+      } else if (res.status === 409 && res.data && Number.isFinite(Number(res.data.currentRev || res.data.flashRev))) {
+        const serverRev = Number(res.data.currentRev ?? res.data.flashRev);
+        if (slot) slot.flashRev = Math.max(slot.flashRev || 0, serverRev);
+      }
+      return res;
+    }
+
+    async fetchSlotFlashFromBackend(runId, slotIndex) {
+      if (!this.state.auth || this.state.auth.status !== "signed_in" || !runId) return null;
+      const sIdx = Number.isInteger(Number(slotIndex)) ? Number(slotIndex) : 0;
+      const res = await this._apiFetch(`/api/runs/${encodeURIComponent(runId)}/slot/${sIdx}/flash?encoding=gzip`, {
+        method: "GET",
+      });
+      if (!res.ok || !res.data || !res.data.flashSaveB64) return null;
+      const payload =
+        res.data.flashEncoding === "gzip" && !String(res.data.flashSaveB64).startsWith("gz:")
+          ? `gz:${res.data.flashSaveB64}`
+          : res.data.flashSaveB64;
+      const rawB64 = await decompressFlashPayloadToBase64(payload);
+      if (!rawB64) return null;
+      return {
+        flashSaveB64: rawB64,
+        flashRev: Math.max(0, Math.floor(Number(res.data.flashRev) || 0)),
+        slotMeta: res.data.slotMeta || null,
+      };
+    }
+
+    async claimRunSlotOnBackend(runId, slotIndex, characterName) {
+      if (!this.state.auth || this.state.auth.status !== "signed_in" || !runId) {
+        return { ok: false };
+      }
+      return this._apiFetch(`/api/runs/${encodeURIComponent(runId)}/slot/${Number(slotIndex)}/claim`, {
+        method: "POST",
+        body: { characterName: characterName || getOrCreatePlayerName() },
+      });
+    }
+
+    async deleteCloudRun(runId) {
+      if (!this.state.auth || this.state.auth.status !== "signed_in" || !runId) {
+        return { ok: false };
+      }
+      const res = await this._apiFetch(`/api/runs/${encodeURIComponent(runId)}`, { method: "DELETE" });
+      if (res.ok) {
+        await this.refreshCloudRuns();
+      }
+      return res;
+    }
+
+    async hasReturningSlotForRun(runId) {
+      if (!runId) return false;
+      if (this._validateSessionPromise) {
+        await this._validateSessionPromise.catch(() => {});
+      }
+      const myUserId = this._getEffectiveUserId();
+      const myTok = this.state.connection && this.state.connection.myToken;
+      const allCloud = [
+        ...(this.cloudRuns && Array.isArray(this.cloudRuns.hostedRuns) ? this.cloudRuns.hostedRuns : []),
+        ...(this.cloudRuns && Array.isArray(this.cloudRuns.joinedRuns) ? this.cloudRuns.joinedRuns : []),
+      ];
+      if (allCloud.some((r) => r && (r.runId === runId || r.run_id === runId))) {
+        return true;
+      }
+      const meta = readFlashSaveMeta();
+      if (meta.runId === runId && hasValidWasmFlashSave()) return true;
+      for (let idx = 0; idx < 4; idx++) {
+        const cached = await this.getCachedSlotFlashLocal(runId, idx);
+        if (cached && cached.flashSaveB64) return true;
+      }
+      const runs = await this.listSavedRuns();
+      const snap = runs.find((r) => r && r.runId === runId);
+      if (snap && Array.isArray(snap.playerSlots)) {
+        return snap.playerSlots.some(
+          (p) =>
+            p &&
+            ((myUserId !== "guest" && p.userId === myUserId) || (myTok && p.token === myTok))
+        );
+      }
+      return false;
     }
 
     subscribe(fn) {
@@ -1139,6 +1671,9 @@
       this.state.connection.myPeerId = 1;
       this.state.connection.mySlotIndex = 0;
       this._pendingLateJoin = null;
+      this._pendingSlotClaim = null;
+      this._suppressLocalFlashSync = false;
+      this._sendClientHello = null;
       this.state.players[0].busy = false;
       this.state.players[0].inBattle = false;
       for (let i = 1; i < 4; i++) {
@@ -1156,24 +1691,36 @@
       this.emit("connection");
     }
 
-    hostRoom(customConfig, resumeSnapshot) {
+    async hostRoom(customConfig, resumeSnapshot) {
       this.disconnect();
       let freshResetMode = "";
       if (resumeSnapshot) {
-        this.applySnapshotLocal(resumeSnapshot, true);
+        await this.applySnapshotLocal(resumeSnapshot, true);
       } else if (customConfig) {
+        const prevMeta = readFlashSaveMeta();
+        if (prevMeta.runId) {
+          await this.flushActiveFlashToCache();
+        }
         const { freshReset, freshMode, ...cleanConfig } = customConfig;
         if (freshReset) {
           freshResetMode = freshMode === "littleroot" ? "littleroot" : "title";
         }
-        this.state.runConfig = {
-          ...this.state.runConfig,
-          ...cleanConfig,
-          runId: cleanConfig.runId || generateId("run"),
-        };
+        this.state.runConfig = normalizeRunConfig(
+          {
+            ...cleanConfig,
+            runId: cleanConfig.runId || generateId("run"),
+          },
+          this.state.runConfig
+        );
+      } else {
+        this.state.runConfig = normalizeRunConfig(this.state.runConfig, makeDefaultRunConfig());
       }
       if (freshResetMode) {
         this.resetNewGame({ mode: freshResetMode });
+      }
+      this._pendingRunConfigSync = { fromPeerId: 1, msg: { t: "run_config_sync" } };
+      if (global.PokemonWasmBridge._dispatchWasmJson(CH_CONTROL, 1, { t: "run_config_sync" })) {
+        this._pendingRunConfigSync = null;
       }
 
       const mySlot = this.state.players[0];
@@ -1181,11 +1728,13 @@
       mySlot.isHost = true;
       mySlot.peerId = 1;
       mySlot.token = this.state.connection.myToken;
+      mySlot.userId = (this.state.auth && this.state.auth.userId) || "";
+      mySlot.username = (this.state.auth && this.state.auth.username) || "";
       mySlot.name = getOrCreatePlayerName();
       global.PokemonWasmBridge._syncPeersToWasm(this.state.players);
 
       const requestedPort = Number(customConfig && customConfig.roomPort) || 27462;
-      const wsUrl = `${global.POKEMON_WS_URL}?role=host&room=${requestedPort}`;
+      const wsUrl = `${global.POKEMON_WS_URL}?role=host&room=${requestedPort}${this.state.auth && this.state.auth.sessionToken ? `&sessionToken=${encodeURIComponent(this.state.auth.sessionToken)}` : ""}`;
 
       this.state.connection.status = "connecting";
       this.state.connection.role = "host";
@@ -1212,6 +1761,10 @@
           this.state.connection.roomPort = assignedPort;
           this.state.connection.myPeerId = 1;
           this.state.connection.mySlotIndex = 0;
+          if (global.PokemonWasmBridge._dispatchWasmJson(CH_CONTROL, 1, { t: "run_config_sync" })) {
+            this._pendingRunConfigSync = null;
+          }
+          this.broadcastControl({ t: "run_config_sync", runConfig: this.state.runConfig });
           this.pushRoomInfo();
           if (this._roomInfoTimer) clearInterval(this._roomInfoTimer);
           this._roomInfoTimer = setInterval(() => this.pushRoomInfo(), 4000);
@@ -1264,10 +1817,18 @@
       const port = Number(roomPort) || 27462;
       const joinOpts = options && typeof options === "object" ? options : {};
       this.disconnect();
+      this._pendingSlotClaim = null;
+      this._suppressLocalFlashSync = true;
       this._joinOptions = {
         confirmedProgressed: Boolean(joinOpts.confirmedProgressed),
+        claimSlotIndex:
+          Number.isInteger(Number(joinOpts.claimSlotIndex)) && Number(joinOpts.claimSlotIndex) >= 1
+            ? Number(joinOpts.claimSlotIndex)
+            : -1,
+        joinAsNew: Boolean(joinOpts.joinAsNew),
       };
-      const wsUrl = `${global.POKEMON_WS_URL}?role=client&room=${port}`;
+      const sessionTok = (this.state.auth && this.state.auth.sessionToken) || "";
+      const wsUrl = `${global.POKEMON_WS_URL}?role=client&room=${port}${sessionTok ? `&sessionToken=${encodeURIComponent(sessionTok)}` : ""}`;
 
       this.state.connection.status = "connecting";
       this.state.connection.role = "client";
@@ -1280,21 +1841,31 @@
       this.ws = ws;
       let helloSent = false;
 
-      const sendClientHello = () => {
-        if (helloSent || ws.readyState !== WebSocket.OPEN) return;
+      const sendClientHello = (extraOpts) => {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        const ex = extraOpts && typeof extraOpts === "object" ? extraOpts : {};
+        if (!ex.force && helloSent) return;
         helloSent = true;
         const localMeta = readFlashSaveMeta();
+        const myAuth = this.state.auth || {};
         this.sendJsonToHost(CH_CONTROL, {
           t: "hello",
           token: this.state.connection.myToken,
+          sessionToken: myAuth.sessionToken || "",
+          userId: myAuth.status === "signed_in" ? myAuth.userId : "",
+          username: myAuth.status === "signed_in" ? myAuth.username : "",
           name: getOrCreatePlayerName(),
           localRunId: localMeta.runId || "",
-          localParty: this.state.players[0].party,
-          money: this.state.players[0].money,
-          bagItems: this.state.players[0].bagItems,
-          tutorialComplete: Boolean(this.state.players[0].tutorialComplete),
+          localParty: localMeta.runId ? this.state.players[0].party : [],
+          money: localMeta.runId ? this.state.players[0].money : 0,
+          bagItems: localMeta.runId ? this.state.players[0].bagItems : [],
+          tutorialComplete: localMeta.runId ? Boolean(this.state.players[0].tutorialComplete) : false,
+          claimSlotIndex:
+            ex.claimSlotIndex !== undefined ? ex.claimSlotIndex : this._joinOptions.claimSlotIndex,
+          joinAsNew: ex.joinAsNew !== undefined ? Boolean(ex.joinAsNew) : this._joinOptions.joinAsNew,
         });
       };
+      this._sendClientHello = sendClientHello;
 
       ws.onopen = () => {
         // Wait for relay FRAME_PEER_CONNECTED(1) or FRAME_REJECTED before marking connected
@@ -1444,6 +2015,7 @@
       const gameOver = Boolean(cfg.gameOver);
       const info = {
         host_name: this.state.players[0].name,
+        host_user_id: (this.state.auth && this.state.auth.userId) || "",
         room_name: cfg.roomName || `${this.state.players[0].name}'s Room`,
         seed: cfg.seed,
         randomizer_preset: cfg.randomizerPreset,
@@ -1627,8 +2199,40 @@
       if (channel === CH_CONTROL) {
         switch (msg.t) {
           case "hello": {
-            // Reclaim existing token slot or pick first free slot (1..3)
-            const existingIdx = this.state.players.findIndex((p, idx) => idx > 0 && p.token && p.token === msg.token);
+            const myRunId = (this.state.runConfig && this.state.runConfig.runId) || "";
+            const verifiedUserId =
+              msg.authVerified && msg.authUserId
+                ? String(msg.authUserId).slice(0, 64)
+                : "";
+            const verifiedUsername =
+              msg.authVerified && msg.authUsername
+                ? String(msg.authUsername).slice(0, 32)
+                : "";
+            const incomingToken = String(msg.token || "").slice(0, 64);
+            const requestedClaimIdx =
+              Number.isInteger(Number(msg.claimSlotIndex)) ? Number(msg.claimSlotIndex) : -1;
+            const joinAsNew = Boolean(msg.joinAsNew);
+
+            // 1) Primary match by verified userId; fallback to clientToken ONLY for legacy unauthenticated slots.
+            let existingIdx = -1;
+            if (verifiedUserId) {
+              existingIdx = this.state.players.findIndex(
+                (p, idx) => idx > 0 && p.userId && p.userId === verifiedUserId
+              );
+            }
+            if (existingIdx === -1 && !verifiedUserId && incomingToken) {
+              existingIdx = this.state.players.findIndex(
+                (p, idx) => idx > 0 && !p.userId && p.token && p.token === incomingToken
+              );
+            }
+            // If a previously unauthenticated local slot matches by token and caller now signed in, upgrade it if unclaimed
+            if (existingIdx === -1 && verifiedUserId && incomingToken) {
+              const legacyIdx = this.state.players.findIndex(
+                (p, idx) => idx > 0 && !p.connected && !p.userId && p.token && p.token === incomingToken
+              );
+              if (legacyIdx !== -1) existingIdx = legacyIdx;
+            }
+
             if (this.state.runConfig && this.state.runConfig.gameOver && existingIdx === -1) {
               this.sendJson(CH_CONTROL, fromPeerId, {
                 t: "join_rejected",
@@ -1638,13 +2242,60 @@
               });
               return;
             }
+
             let targetIdx = existingIdx;
-            if (targetIdx === -1) {
-              targetIdx = this.state.players.findIndex((p, idx) => idx > 0 && !p.connected && !p.token);
+            let isClaimedSlot = false;
+            if (targetIdx === -1 && requestedClaimIdx >= 1 && requestedClaimIdx <= 3) {
+              const candidate = this.state.players[requestedClaimIdx];
+              if (candidate && !candidate.connected) {
+                targetIdx = requestedClaimIdx;
+                isClaimedSlot = true;
+              }
             }
+
+            const emptyIdx = this.state.players.findIndex(
+              (p, idx) =>
+                idx > 0 &&
+                !p.connected &&
+                !p.token &&
+                !p.userId &&
+                (!p.party || p.party.length === 0) &&
+                !p.tutorialComplete &&
+                !(this._flashSavesBySlot && this._flashSavesBySlot[idx])
+            );
+
             if (targetIdx === -1) {
-              targetIdx = this.state.players.findIndex((p, idx) => idx > 0 && !p.connected);
+              const offlineClaimable = this.state.players.filter(
+                (p, idx) =>
+                  idx > 0 &&
+                  !p.connected &&
+                  (p.userId ||
+                    p.token ||
+                    (p.party && p.party.length > 0) ||
+                    p.tutorialComplete ||
+                    (this._flashSavesBySlot && this._flashSavesBySlot[idx]))
+              );
+              if (!joinAsNew && offlineClaimable.length > 0) {
+                this.sendJson(CH_CONTROL, fromPeerId, {
+                  t: "slot_claim_required",
+                  runId: myRunId,
+                  roomName: (this.state.runConfig && this.state.runConfig.roomName) || "Hoenn Run",
+                  hasEmptySlot: emptyIdx !== -1,
+                  offlineSlots: offlineClaimable.map((p) => ({
+                    slotIndex: p.slotIndex,
+                    name: p.name,
+                    username: p.username || "",
+                    userId: p.userId || "",
+                    tutorialComplete: Boolean(p.tutorialComplete),
+                    flashRev: Number(p.flashRev) || 0,
+                    party: Array.isArray(p.party) ? p.party : [],
+                  })),
+                });
+                return;
+              }
+              targetIdx = emptyIdx;
             }
+
             if (targetIdx === -1) {
               this.sendJson(CH_CONTROL, fromPeerId, {
                 t: "join_rejected",
@@ -1656,21 +2307,30 @@
             }
 
             const slot = this.state.players[targetIdx];
-            const isReturningSlot = existingIdx !== -1;
-            const myRunId = (this.state.runConfig && this.state.runConfig.runId) || "";
-            const isSameRunClient = isReturningSlot || Boolean(myRunId && msg.localRunId && msg.localRunId === myRunId);
+            const isReturningSlot = existingIdx !== -1 || isClaimedSlot;
+            const isSameRunClient =
+              isReturningSlot || Boolean(myRunId && msg.localRunId && msg.localRunId === myRunId);
             slot.peerId = fromPeerId;
             slot.connected = true;
             slot.isHost = false;
             slot.inBattle = false;
             slot.busy = false;
-            slot.token = String(msg.token || generateId("tok")).slice(0, 64);
-            slot.name = String(msg.name || `Trainer ${targetIdx + 1}`).slice(0, 20);
+            if (verifiedUserId) {
+              slot.userId = verifiedUserId;
+              slot.username = verifiedUsername || slot.username || "";
+            }
+            slot.token = String(incomingToken || slot.token || generateId("tok")).slice(0, 64);
+            if (!isReturningSlot || !slot.name || slot.name === `Slot ${targetIdx + 1}`) {
+              slot.name = String(msg.name || verifiedUsername || `Trainer ${targetIdx + 1}`).slice(0, 20);
+            } else if (msg.name && !isClaimedSlot) {
+              slot.name = String(msg.name).slice(0, 20);
+            }
             if (!isSameRunClient) {
               slot.party = [];
               slot.money = 0;
               slot.bagItems = [];
               slot.tutorialComplete = false;
+              slot.flashRev = 0;
             } else {
               slot.tutorialComplete = Boolean(slot.tutorialComplete || msg.tutorialComplete);
               if ((!slot.party || slot.party.length === 0) && Array.isArray(msg.localParty)) {
@@ -1695,6 +2355,8 @@
               t: "welcome",
               assignedPeerId: fromPeerId,
               assignedSlot: targetIdx,
+              isReturningSlot,
+              slotFlashRev: Number(slot.flashRev) || 0,
               runConfig: this.state.runConfig,
               players: this.state.players,
               world: this.state.world,
@@ -1704,7 +2366,8 @@
             });
             this.broadcastControl({ t: "players_sync", players: this.state.players });
             this.pushRoomInfo();
-            this.addLog(`${slot.name} claimed Trainer Slot P${targetIdx + 1}.`, "gold");
+            this.saveRunSnapshotToDb(undefined, { silentBroadcast: true, skipWasmSave: true }).catch(() => {});
+            this.addLog(`${slot.name} ${isReturningSlot ? "resumed" : "claimed"} Trainer Slot P${targetIdx + 1}.`, "gold");
             this.emit("players");
             break;
           }
@@ -1743,6 +2406,20 @@
             const prevBusy = senderSlot.busy;
             const prevInBattle = senderSlot.inBattle;
             const prevTutorial = senderSlot.tutorialComplete;
+            const hasSavedProgress =
+              (senderSlot.flashRev || 0) > 0 ||
+              (Array.isArray(senderSlot.party) && senderSlot.party.length > 0) ||
+              Boolean(senderSlot.tutorialComplete) ||
+              Boolean(this._flashSavesBySlot && this._flashSavesBySlot[senderSlot.slotIndex]);
+            const isBlankTutorialSync =
+              Array.isArray(msg.party) &&
+              msg.party.length === 0 &&
+              !msg.tutorialComplete &&
+              !msg.explicitReset;
+            if (hasSavedProgress && isBlankTutorialSync) {
+              // Never allow a blank/tutorial state_sync to overwrite a slot that already has saved progress.
+              break;
+            }
             if (Array.isArray(msg.party)) {
               senderSlot.party = msg.party.slice(0, 6).map(sanitizeMon).filter(Boolean);
             }
@@ -1770,13 +2447,29 @@
           }
           case "flash_save_sync": {
             if (!senderSlot || typeof msg.flashSaveB64 !== "string" || msg.flashSaveB64.length < 4096) break;
+            const bytes = decodeFlashBase64(msg.flashSaveB64);
+            if (!hasValidSectorSignature(bytes)) break;
+            const prevRev = Math.max(0, Math.floor(Number(senderSlot.flashRev) || 0));
+            const incomingRev = Number.isFinite(Number(msg.flashRev))
+              ? Math.max(1, Math.floor(Number(msg.flashRev)))
+              : prevRev + 1;
+            if (incomingRev < prevRev) break;
+            senderSlot.flashRev = Math.max(prevRev + 1, incomingRev);
             if (!this._flashSavesBySlot) this._flashSavesBySlot = {};
             this._flashSavesBySlot[senderSlot.slotIndex] = msg.flashSaveB64;
+            if (this._hostFlashPersistTimer) clearTimeout(this._hostFlashPersistTimer);
+            this._hostFlashPersistTimer = setTimeout(() => {
+              this._hostFlashPersistTimer = null;
+              this.saveRunSnapshotToDb(undefined, { silentBroadcast: true, skipWasmSave: true }).catch(() => {});
+            }, 150);
             break;
           }
           case "flash_save_clear": {
-            if (senderSlot && this._flashSavesBySlot) {
-              delete this._flashSavesBySlot[senderSlot.slotIndex];
+            if (senderSlot) {
+              senderSlot.flashRev = 0;
+              if (this._flashSavesBySlot) {
+                delete this._flashSavesBySlot[senderSlot.slotIndex];
+              }
             }
             break;
           }
@@ -1872,12 +2565,156 @@
       }
     }
 
-    _finalizeClientWelcome(msg, meta) {
+    async confirmSlotClaim(slotIndex) {
+      const pending = this._pendingSlotClaim;
+      if (!pending || !this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+      const cleanIdx = Math.max(1, Math.min(3, Math.floor(Number(slotIndex) || 1)));
+      this._pendingSlotClaim = null;
+      this._joinOptions = {
+        confirmedProgressed: true,
+        claimSlotIndex: cleanIdx,
+        joinAsNew: false,
+      };
+      if (pending.runId && this.state.auth && this.state.auth.status === "signed_in") {
+        await this.claimRunSlotOnBackend(pending.runId, cleanIdx).catch(() => {});
+      }
+      if (typeof this._sendClientHello === "function") {
+        this._sendClientHello({ force: true, claimSlotIndex: cleanIdx, joinAsNew: false });
+      }
+      return true;
+    }
+
+    joinAsNewFromClaim() {
+      const pending = this._pendingSlotClaim;
+      if (!pending || !this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+      this._pendingSlotClaim = null;
+      this._joinOptions = {
+        ...this._joinOptions,
+        claimSlotIndex: -1,
+        joinAsNew: true,
+      };
+      if (typeof this._sendClientHello === "function") {
+        this._sendClientHello({ force: true, claimSlotIndex: -1, joinAsNew: true });
+      }
+      return true;
+    }
+
+    cancelSlotClaim() {
+      const hadPending = Boolean(this._pendingSlotClaim);
+      this._pendingSlotClaim = null;
+      this.disconnect();
+      return hadPending;
+    }
+
+    async _resolveBestWelcomeFlash(msg, meta) {
+      if (this._validateSessionPromise) {
+        await this._validateSessionPromise.catch(() => {});
+      }
+      const myIdx = Math.max(0, Math.min(3, Math.floor(Number(msg.assignedSlot) || 0)));
+      const welcomeRunId = (msg.runConfig && msg.runConfig.runId) || "";
+      const hostFlashB64 = typeof msg.slotFlashSaveB64 === "string" ? msg.slotFlashSaveB64 : "";
+      const hostRev = Math.max(0, Math.floor(Number(msg.slotFlashRev) || 0));
+      const hostValid = hostFlashB64 && hasValidSectorSignature(decodeFlashBase64(hostFlashB64)) ? hostFlashB64 : "";
+
+      const idbEntry = welcomeRunId ? await this.getCachedSlotFlashLocal(welcomeRunId, myIdx) : null;
+      const idbB64 =
+        idbEntry && idbEntry.flashSaveB64 && hasValidSectorSignature(decodeFlashBase64(idbEntry.flashSaveB64))
+          ? idbEntry.flashSaveB64
+          : "";
+      const idbRev = idbEntry ? Math.max(0, Math.floor(Number(idbEntry.flashRev) || 0)) : 0;
+
+      let backendEntry = meta && meta._backendFlash !== undefined ? meta._backendFlash : undefined;
+      if (backendEntry === undefined && welcomeRunId && this.state.auth && this.state.auth.status === "signed_in") {
+        backendEntry = await this.fetchSlotFlashFromBackend(welcomeRunId, myIdx);
+        if (meta) meta._backendFlash = backendEntry;
+      }
+      const backendB64 =
+        backendEntry && backendEntry.flashSaveB64 && hasValidSectorSignature(decodeFlashBase64(backendEntry.flashSaveB64))
+          ? backendEntry.flashSaveB64
+          : "";
+      const backendRev = backendEntry ? Math.max(0, Math.floor(Number(backendEntry.flashRev) || 0)) : 0;
+
+      // Also check active localStorage flash if it matches welcomeRunId
+      const localMeta = readFlashSaveMeta();
+      let activeLocalB64 = "";
+      if (welcomeRunId && localMeta.runId === welcomeRunId && hasValidWasmFlashSave()) {
+        try {
+          activeLocalB64 = localStorage.getItem(STORAGE_KEYS.flashSave) || "";
+        } catch (_) {}
+      }
+      const activeLocalRev = localMeta.runId === welcomeRunId ? Math.max(0, Number(localMeta.flashRev) || 0) : 0;
+
+      const candidates = [];
+      if (hostValid) candidates.push({ source: "host", b64: hostValid, rev: hostRev, prio: 3 });
+      if (backendB64) candidates.push({ source: "backend", b64: backendB64, rev: backendRev, prio: 4 });
+      if (idbB64) candidates.push({ source: "idb", b64: idbB64, rev: idbRev, prio: 2 });
+      if (activeLocalB64) candidates.push({ source: "local", b64: activeLocalB64, rev: activeLocalRev, prio: 1 });
+
+      candidates.sort((a, b) => (b.rev !== a.rev ? b.rev - a.rev : b.prio - a.prio));
+      return {
+        chosen: candidates[0] || null,
+        hostRev,
+        hasAnySavedFlash: candidates.length > 0,
+      };
+    }
+
+    async _handleWelcomeAsync(msg, meta) {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+      if (msg.runConfig && msg.runConfig.gameOver) {
+        const message = "This Soul-Link Nuzlocke run has ended (Game Over).";
+        this.state.connection.error = message;
+        this.addLog(`Join rejected (RUN_GAME_OVER): ${message}`, "death");
+        this.emit("join_rejected", {
+          port: this.state.connection.roomPort,
+          code: "RUN_GAME_OVER",
+          reason: "RUN_GAME_OVER",
+          message,
+        });
+        this.disconnect();
+        return;
+      }
+      const resolved = await this._resolveBestWelcomeFlash(msg, meta);
+      if (meta) meta._resolvedFlash = resolved;
+      const isReturning = Boolean(msg.isReturningSlot || resolved.hasAnySavedFlash);
+      const isBrandNewJoiner = !isReturning;
+      const summary = this._getRunProgressSummary(msg.world, msg.soulLink);
+      const isProgressedRoom =
+        summary.badgeCount > 0 ||
+        summary.deathCount > 0 ||
+        summary.caughtRoutesCount > 0 ||
+        summary.deadRoutes.length > 0;
+      if (isBrandNewJoiner && isProgressedRoom && !(this._joinOptions && this._joinOptions.confirmedProgressed)) {
+        const hostSlot = Array.isArray(msg.players) && msg.players[0] ? msg.players[0] : null;
+        this._pendingLateJoin = { msg, meta };
+        this.emit("late_join_confirm_needed", {
+          port: this.state.connection.roomPort,
+          roomName: (msg.runConfig && msg.runConfig.roomName) || `${(hostSlot && hostSlot.name) || "Host"}'s Room`,
+          hostName: (hostSlot && hostSlot.name) || "Host",
+          nuzlockePreset: (msg.runConfig && msg.runConfig.nuzlockePreset) || "none",
+          badgeCount: summary.badgeCount,
+          deathCount: summary.deathCount,
+          caughtRoutesCount: summary.caughtRoutesCount,
+          graveyard: summary.graveyard,
+          deadRoutes: summary.deadRoutes,
+          runConfig: msg.runConfig || this.state.runConfig,
+        });
+        return;
+      }
+      await this._finalizeClientWelcome(msg, meta);
+    }
+
+    async _finalizeClientWelcome(msg, meta) {
       const fromPeerId = 1;
       const myIdx = Math.max(0, Math.min(3, Math.floor(Number(msg.assignedSlot) || 0)));
+      const prevMeta = readFlashSaveMeta();
+      const welcomeRunId = (msg.runConfig && msg.runConfig.runId) || "";
+      if (prevMeta.runId && prevMeta.runId !== welcomeRunId) {
+        await this.flushActiveFlashToCache();
+      }
+
       this.state.connection.myPeerId = Number(msg.assignedPeerId) || this.state.connection.myPeerId;
       this.state.connection.mySlotIndex = myIdx;
-      if (msg.runConfig) this.state.runConfig = { ...makeDefaultRunConfig(), ...msg.runConfig };
+      if (msg.runConfig) this.state.runConfig = normalizeRunConfig(msg.runConfig, makeDefaultRunConfig());
       if (Array.isArray(msg.players)) {
         this.state.players = [0, 1, 2, 3].map((idx) => sanitizePlayerSlot(msg.players[idx], idx));
       }
@@ -1885,48 +2722,70 @@
       if (msg.soulLink) this.state.soulLink = msg.soulLink;
       if (!this._flashSavesBySlot) this._flashSavesBySlot = {};
 
-      const welcomeRunId = (msg.runConfig && msg.runConfig.runId) || "";
-      const localMeta = readFlashSaveMeta();
-      const slotFlashSaveB64 = typeof msg.slotFlashSaveB64 === "string" ? msg.slotFlashSaveB64 : "";
-      const keepLocalSameRun = Boolean(
-        !slotFlashSaveB64 &&
-        hasValidWasmFlashSave() &&
-        welcomeRunId &&
-        localMeta.runId === welcomeRunId
-      );
-      if (slotFlashSaveB64) {
-        this._flashSavesBySlot[myIdx] = slotFlashSaveB64;
-        if (importWasmFlashBase64(slotFlashSaveB64)) {
-          writeFlashSaveMeta(welcomeRunId, Date.now());
+      const resolved =
+        (meta && meta._resolvedFlash) || (await this._resolveBestWelcomeFlash(msg, meta || {}));
+      const chosen = resolved.chosen;
+      const mySlot = this.state.players[myIdx];
+
+      if (chosen && chosen.b64) {
+        const chosenRev = Math.max(chosen.rev || 0, Number(mySlot && mySlot.flashRev) || 0);
+        this._flashSavesBySlot[myIdx] = chosen.b64;
+        if (mySlot) mySlot.flashRev = chosenRev;
+        if (importWasmFlashBase64(chosen.b64)) {
+          writeFlashSaveMeta(welcomeRunId, Date.now(), {
+            userId: this._getEffectiveUserId(),
+            slotIndex: myIdx,
+            flashRev: chosenRev,
+          });
+          await this.cacheSlotFlashLocal(welcomeRunId, myIdx, chosen.b64, chosenRev, Date.now());
+          this._suppressLocalFlashSync = false;
+          this._resumeFallbackOccurred = false;
           global.PokemonWasmBridge._loadSnapshotIntoWasm();
         }
-      } else if (!keepLocalSameRun) {
+        if (chosen.source !== "host" && chosen.rev > resolved.hostRev) {
+          this.sendJsonToHost(CH_CONTROL, {
+            t: "flash_save_sync",
+            flashSaveB64: chosen.b64,
+            flashRev: Math.max(1, chosenRev),
+          });
+        }
+      } else {
         // Brand-new late joiner: clear mismatched local Flash and start fresh in Littleroot tutorial.
         delete this._flashSavesBySlot[myIdx];
-        clearLocalFlashSave();
-        const mySlot = this.state.players[myIdx];
+        clearLocalFlashSave({ keepMeta: true });
         if (mySlot) {
           mySlot.tutorialComplete = false;
           mySlot.party = [];
           mySlot.money = 0;
           mySlot.bagItems = [];
+          mySlot.flashRev = 0;
         }
-        global.PokemonWasmBridge._resetNewGameInWasm("littleroot");
         if (welcomeRunId) {
-          writeFlashSaveMeta(welcomeRunId, Date.now());
+          writeFlashSaveMeta(welcomeRunId, Date.now(), {
+            userId: this._getEffectiveUserId(),
+            slotIndex: myIdx,
+            flashRev: 0,
+          });
         }
+        this._ignoreBlankSaveUntilMs = Date.now() + 1500;
+        this._suppressLocalFlashSync = false;
+        global.PokemonWasmBridge._resetNewGameInWasm("littleroot");
       }
 
       global.PokemonWasmBridge._syncPeersToWasm(this.state.players);
       global.PokemonWasmBridge._syncSoulLinkToWasm(this.state);
       this._applySpeed(this.state.runConfig.speedMultiplier);
-      this.saveRunSnapshotToDb();
-      global.PokemonWasmBridge._dispatchWasmJson(CH_CONTROL, fromPeerId, { t: "run_config_sync" });
+      this.saveRunSnapshotToDb(undefined, { skipWasmSave: true }).catch(() => {});
+      this._pendingRunConfigSync = { fromPeerId, msg: { t: "run_config_sync" } };
+      if (global.PokemonWasmBridge._dispatchWasmJson(CH_CONTROL, fromPeerId, { t: "run_config_sync" })) {
+        this._pendingRunConfigSync = null;
+      }
       if (msg.world && Array.isArray(msg.world.badges) && msg.world.badges.some(Boolean)) {
-        global.PokemonWasmBridge._dispatchWasmJson(CH_WORLD_SYNC, fromPeerId, {
-          t: "world_sync",
-          badges: msg.world.badges,
-        });
+        const worldMsg = { t: "world_sync", badges: msg.world.badges };
+        this._pendingWorldSync = { fromPeerId, msg: worldMsg };
+        if (global.PokemonWasmBridge._dispatchWasmJson(CH_WORLD_SYNC, fromPeerId, worldMsg)) {
+          this._pendingWorldSync = null;
+        }
       }
       if (this.state.runConfig && this.state.runConfig.gameOver) {
         this._markRunGameOver("", { silentToast: true });
@@ -1938,54 +2797,19 @@
       const rawBytes = meta && meta.rawBytes;
       if (channel === CH_CONTROL) {
         switch (msg.t) {
+          case "slot_claim_required": {
+            this._pendingSlotClaim = {
+              port: this.state.connection.roomPort,
+              runId: String(msg.runId || ""),
+              roomName: String(msg.roomName || "Hoenn Run"),
+              hasEmptySlot: Boolean(msg.hasEmptySlot),
+              offlineSlots: Array.isArray(msg.offlineSlots) ? msg.offlineSlots : [],
+            };
+            this.emit("slot_claim_required", this._pendingSlotClaim);
+            break;
+          }
           case "welcome": {
-            if (msg.runConfig && msg.runConfig.gameOver) {
-              const message = "This Soul-Link Nuzlocke run has ended (Game Over).";
-              this.state.connection.error = message;
-              this.addLog(`Join rejected (RUN_GAME_OVER): ${message}`, "death");
-              this.emit("join_rejected", {
-                port: this.state.connection.roomPort,
-                code: "RUN_GAME_OVER",
-                reason: "RUN_GAME_OVER",
-                message,
-              });
-              this.disconnect();
-              return;
-            }
-            const welcomeRunId = (msg.runConfig && msg.runConfig.runId) || "";
-            const localMeta = readFlashSaveMeta();
-            const hasSlotFlash = typeof msg.slotFlashSaveB64 === "string" && msg.slotFlashSaveB64.length > 0;
-            const keepLocalSameRun = Boolean(
-              !hasSlotFlash &&
-              hasValidWasmFlashSave() &&
-              welcomeRunId &&
-              localMeta.runId === welcomeRunId
-            );
-            const isBrandNewJoiner = !hasSlotFlash && !keepLocalSameRun;
-            const summary = this._getRunProgressSummary(msg.world, msg.soulLink);
-            const isProgressedRoom =
-              summary.badgeCount > 0 ||
-              summary.deathCount > 0 ||
-              summary.caughtRoutesCount > 0 ||
-              summary.deadRoutes.length > 0;
-            if (isBrandNewJoiner && isProgressedRoom && !(this._joinOptions && this._joinOptions.confirmedProgressed)) {
-              const hostSlot = Array.isArray(msg.players) && msg.players[0] ? msg.players[0] : null;
-              this._pendingLateJoin = { msg, meta };
-              this.emit("late_join_confirm_needed", {
-                port: this.state.connection.roomPort,
-                roomName: (msg.runConfig && msg.runConfig.roomName) || `${(hostSlot && hostSlot.name) || "Host"}'s Room`,
-                hostName: (hostSlot && hostSlot.name) || "Host",
-                nuzlockePreset: (msg.runConfig && msg.runConfig.nuzlockePreset) || "none",
-                badgeCount: summary.badgeCount,
-                deathCount: summary.deathCount,
-                caughtRoutesCount: summary.caughtRoutesCount,
-                graveyard: summary.graveyard,
-                deadRoutes: summary.deadRoutes,
-                runConfig: msg.runConfig || this.state.runConfig,
-              });
-              return;
-            }
-            this._finalizeClientWelcome(msg, meta);
+            this._handleWelcomeAsync(msg, meta || {});
             break;
           }
           case "join_rejected": {
@@ -2031,9 +2855,12 @@
           }
           case "run_config_sync": {
             if (msg.runConfig) {
-              this.state.runConfig = { ...makeDefaultRunConfig(), ...msg.runConfig };
+              this.state.runConfig = normalizeRunConfig(msg.runConfig, makeDefaultRunConfig());
               this._applySpeed(this.state.runConfig.speedMultiplier);
-              global.PokemonWasmBridge._dispatchWasmJson(channel, fromPeerId, msg, rawBytes);
+              this._pendingRunConfigSync = { fromPeerId, msg: { t: "run_config_sync" }, rawBytes };
+              if (global.PokemonWasmBridge._dispatchWasmJson(channel, fromPeerId, msg, rawBytes)) {
+                this._pendingRunConfigSync = null;
+              }
               if (this.state.runConfig.gameOver) {
                 this._markRunGameOver("", { silentToast: true });
               }
@@ -2727,37 +3554,68 @@
     }
 
     // --- Cross-Map Hybrid 2v2 Co-op Multi-Battle & PvP Invites ---
-    onTeammateBusyFallback(partnerSlot, reasonStr) {
+    _buildTeammateBusyInfo(partnerSlot, reasonStr) {
       const idx = Number(partnerSlot);
       const partner = Number.isInteger(idx) && idx >= 0 && idx < 4 ? this.state.players[idx] : null;
       const who = partner && partner.name ? partner.name : "Your teammate";
       const mapName = (partner && partner.mapName) || "";
       const validReasons = ["busy", "different_map", "in_battle", "in_tutorial", "not_ready"];
       const reason = typeof reasonStr === "string" && validReasons.includes(reasonStr) ? reasonStr : "busy";
-      let title = "AI Partner Fallback";
-      let msg = `${who} is busy in a cutscene or dialogue — continuing with AI partner.`;
+      let title = "Partner Busy";
+      let desc = `${who} is busy in a cutscene or dialogue.`;
       if (reason === "different_map") {
         title = "Partner Elsewhere";
-        msg = `${who} is in a different area${mapName ? ` (${mapName})` : ""} — continuing with AI partner.`;
+        desc = `${who} is in a different area${mapName ? ` (${mapName})` : ""}.`;
       } else if (reason === "in_tutorial") {
         title = "Partner in Tutorial";
-        msg = `${who} is still in the Littleroot tutorial — continuing with AI partner.`;
+        desc = `${who} is still in the Littleroot tutorial.`;
       } else if (reason === "in_battle") {
         title = "Partner in Battle";
-        msg = `${who} is already in another battle — continuing with AI partner.`;
+        desc = `${who} is already in another battle.`;
       } else if (reason === "not_ready") {
         title = "Partner Not Ready";
-        msg = `${who} is not connected or not ready yet — continuing with AI partner.`;
+        desc = `${who} is not connected or not ready yet.`;
       }
-      this.addLog(msg, "warn");
-      this.emit("teammate_busy", {
+      return {
         targetSlotIndex: Number.isInteger(idx) && idx >= 0 && idx < 4 ? idx : -1,
         targetName: who,
         reason,
         mapName,
         title,
+        desc,
+      };
+    }
+
+    onTeammateBusyFallback(partnerSlot, reasonStr) {
+      const info = this._buildTeammateBusyInfo(partnerSlot, reasonStr);
+      const fallbackTitle = info.reason === "busy" ? "AI Partner Fallback" : info.title;
+      const msg = `${info.desc.replace(/\.$/, "")} — continuing with AI partner.`;
+      this.addLog(msg, "warn");
+      this.emit("teammate_busy", {
+        targetSlotIndex: info.targetSlotIndex,
+        targetName: info.targetName,
+        reason: info.reason,
+        mapName: info.mapName,
+        title: fallbackTitle,
         message: msg,
       });
+    }
+
+    onTeammateBusyPrompt(partnerSlot, reasonStr) {
+      const info = this._buildTeammateBusyInfo(partnerSlot, reasonStr);
+      this.addLog(`${info.desc} Choose Wait for Partner or Proceed with AI Partner.`, "warn");
+      this.emit("teammate_busy_prompt", {
+        targetSlotIndex: info.targetSlotIndex,
+        targetName: info.targetName,
+        reason: info.reason,
+        mapName: info.mapName,
+        title: info.title,
+        message: info.desc,
+      });
+    }
+
+    onTeammateBusyResolved() {
+      this.emit("teammate_busy_resolved", {});
     }
 
     sendBattleInvite(targetSlotIndex, mode, options) {
@@ -3979,10 +4837,15 @@
       };
     }
 
-    applySnapshotLocal(snapshot, markAsHost, options) {
+    async applySnapshotLocal(snapshot, markAsHost, options) {
       if (!snapshot || !snapshot.runConfig) return false;
       const fromBroadcast = Boolean(options && options.fromBroadcast);
-      this.state.runConfig = { ...makeDefaultRunConfig(), ...cloneData(snapshot.runConfig) };
+      const prevMeta = readFlashSaveMeta();
+      const targetRunId = snapshot.runConfig.runId || snapshot.runId || "";
+      if (!fromBroadcast && prevMeta.runId && prevMeta.runId !== targetRunId) {
+        await this.flushActiveFlashToCache();
+      }
+      this.state.runConfig = normalizeRunConfig(cloneData(snapshot.runConfig), makeDefaultRunConfig());
       this._gameOverToastShown = Boolean(this.state.runConfig.gameOver);
       if (snapshot.world) this.state.world = cloneData(snapshot.world);
       if (snapshot.soulLink) this.state.soulLink = cloneData(snapshot.soulLink);
@@ -4000,28 +4863,48 @@
       this._flashSavesBySlot = cloneData(snapshot.flashSavesBySlot || {});
       if (!fromBroadcast) {
         const myIdx = markAsHost ? 0 : (this.state.connection.mySlotIndex || 0);
-        const slotFlash =
+        const snapSlotFlash =
           (snapshot.flashSavesBySlot && snapshot.flashSavesBySlot[myIdx]) ||
           (markAsHost ? snapshot.flashSaveB64 : "") ||
           "";
+        const idbEntry = targetRunId ? await this.getCachedSlotFlashLocal(targetRunId, myIdx) : null;
         const meta = readFlashSaveMeta();
         const snapSavedMs = Date.parse(snapshot.savedAt || "") || 0;
+        const snapRev = Number((this.state.players[myIdx] && this.state.players[myIdx].flashRev) || 0);
+        const idbRev = idbEntry ? Number(idbEntry.flashRev) || 0 : 0;
         const keepNewerLocal =
           hasValidWasmFlashSave() &&
           meta.runId &&
-          meta.runId === snapshot.runId &&
-          meta.savedAtMs > snapSavedMs;
+          meta.runId === targetRunId &&
+          (meta.flashRev > snapRev || meta.savedAtMs > snapSavedMs);
         if (keepNewerLocal) {
           const newerB64 = exportWasmFlashBase64();
           if (newerB64) {
             this._flashSavesBySlot[myIdx] = newerB64;
           }
-        } else if (slotFlash) {
-          if (importWasmFlashBase64(slotFlash)) {
-            writeFlashSaveMeta(snapshot.runId, snapSavedMs || Date.now());
+        } else if (idbEntry && idbEntry.flashSaveB64 && (idbRev > snapRev || !snapSlotFlash)) {
+          if (importWasmFlashBase64(idbEntry.flashSaveB64)) {
+            this._flashSavesBySlot[myIdx] = idbEntry.flashSaveB64;
+            writeFlashSaveMeta(targetRunId, idbEntry.savedAtMs || Date.now(), {
+              userId: this._getEffectiveUserId(),
+              slotIndex: myIdx,
+              flashRev: idbRev,
+            });
+          }
+        } else if (snapSlotFlash) {
+          if (importWasmFlashBase64(snapSlotFlash)) {
+            writeFlashSaveMeta(targetRunId, snapSavedMs || Date.now(), {
+              userId: this._getEffectiveUserId(),
+              slotIndex: myIdx,
+              flashRev: snapRev,
+            });
           }
         }
         this._applySpeed(this.state.runConfig.speedMultiplier);
+        this._pendingRunConfigSync = { fromPeerId: 1, msg: { t: "run_config_sync" } };
+        if (global.PokemonWasmBridge._dispatchWasmJson(CH_CONTROL, 1, { t: "run_config_sync" })) {
+          this._pendingRunConfigSync = null;
+        }
         global.PokemonWasmBridge._loadSnapshotIntoWasm(snapshot);
       } else {
         this._applySpeed(this.state.runConfig.speedMultiplier);
@@ -4032,9 +4915,80 @@
       return true;
     }
 
+    async buildSnapshotFromCloudRun(cloudRun, slotIdxToFetch) {
+      if (!cloudRun || !cloudRun.runId) return null;
+      const runId = cloudRun.runId;
+      const worldState = cloudRun.worldState && typeof cloudRun.worldState === "object" ? cloudRun.worldState : {};
+      const runCfg = normalizeRunConfig(
+        {
+          ...(cloudRun.runConfig || {}),
+          runId,
+          roomName: cloudRun.title || (cloudRun.runConfig && cloudRun.runConfig.roomName) || "Hoenn Run",
+          seed: cloudRun.seed || (cloudRun.runConfig && cloudRun.runConfig.seed) || "",
+          randomizerPreset:
+            cloudRun.randomizerPreset ||
+            (cloudRun.runConfig && cloudRun.runConfig.randomizerPreset) ||
+            "balanced",
+        },
+        makeDefaultRunConfig()
+      );
+      const players = [0, 1, 2, 3].map((idx) => {
+        const s = Array.isArray(cloudRun.slots)
+          ? cloudRun.slots.find((item) => Number(item && item.slotIdx) === idx)
+          : null;
+        if (!s) return makeEmptyPlayerSlot(idx);
+        return sanitizePlayerSlot(
+          {
+            slotIndex: idx,
+            userId: s.userId || "",
+            username: s.username || "",
+            name: s.characterName || s.username || `Slot ${idx + 1}`,
+            tutorialComplete: Boolean(s.tutorialComplete),
+            party: Array.isArray(s.party) ? s.party : [],
+            money: Number(s.money) || 0,
+            bagItems: Array.isArray(s.bagItems) ? s.bagItems : [],
+            flashRev: Number(s.flashRev) || 0,
+            connected: idx === 0,
+          },
+          idx
+        );
+      });
+      const flashSavesBySlot = {};
+      const targetSlot = Number.isInteger(Number(slotIdxToFetch)) ? Number(slotIdxToFetch) : 0;
+      const fetched = await this.fetchSlotFlashFromBackend(runId, targetSlot);
+      if (fetched && fetched.flashSaveB64) {
+        flashSavesBySlot[targetSlot] = fetched.flashSaveB64;
+        if (players[targetSlot]) {
+          players[targetSlot].flashRev = Math.max(players[targetSlot].flashRev || 0, fetched.flashRev || 0);
+        }
+      }
+      return {
+        schema: "pokemon_emerald_mp_run_v1",
+        runId,
+        savedAt: cloudRun.updatedAt ? new Date(cloudRun.updatedAt).toISOString() : new Date().toISOString(),
+        runConfig: runCfg,
+        world: worldState.world || makeInitialState().world,
+        soulLink: worldState.soulLink || makeInitialState().soulLink,
+        playerSlots: players,
+        flashSaveB64: flashSavesBySlot[0] || "",
+        flashSavesBySlot,
+      };
+    }
+
     async saveRunSnapshotToDb(explicitSnapshot, options) {
       const snap = explicitSnapshot || this.buildRunSnapshot(options);
       await idbPut(RUN_DB_NAME, RUN_STORE_NAME, snap.runId, snap);
+      const myIdx = this.state.connection.mySlotIndex || 0;
+      const mySlot = this.state.players[myIdx];
+      if (snap.flashSaveB64 && snap.runId) {
+        await this.cacheSlotFlashLocal(
+          snap.runId,
+          myIdx,
+          snap.flashSaveB64,
+          (mySlot && mySlot.flashRev) || 0,
+          Date.now()
+        );
+      }
       try {
         const list = safeParseJson(localStorage.getItem(STORAGE_KEYS.runsFallback) || "[]") || [];
         const filtered = list.filter((r) => r.runId !== snap.runId);
@@ -4045,6 +4999,13 @@
       const silentBroadcast = Boolean(options && options.silentBroadcast);
       if (this.isNetworkHost() && !explicitSnapshot && !silentBroadcast) {
         this.broadcastControl({ t: "snapshot_sync", snapshot: snap });
+      }
+      if (this.isHost() && this.state.auth && this.state.auth.status === "signed_in") {
+        if (this._cloudUpsertTimer) clearTimeout(this._cloudUpsertTimer);
+        this._cloudUpsertTimer = setTimeout(() => {
+          this._cloudUpsertTimer = null;
+          this.syncRunUpsertToBackend(snap).catch(() => {});
+        }, 200);
       }
       this.emit("saves");
       return snap;
@@ -4104,6 +5065,13 @@
 
     async deleteSavedRun(runId) {
       await idbDelete(RUN_DB_NAME, RUN_STORE_NAME, runId);
+      const uid = this._getEffectiveUserId();
+      for (let idx = 0; idx < 4; idx++) {
+        await idbDelete(FLASH_CACHE_DB_NAME, FLASH_CACHE_STORE_NAME, makeFlashCacheKey(uid, runId, idx));
+        if (uid !== "guest") {
+          await idbDelete(FLASH_CACHE_DB_NAME, FLASH_CACHE_STORE_NAME, makeFlashCacheKey("guest", runId, idx));
+        }
+      }
       try {
         const list = safeParseJson(localStorage.getItem(STORAGE_KEYS.runsFallback) || "[]") || [];
         localStorage.setItem(
@@ -4129,6 +5097,7 @@
       }
 
       const myIdx = this.state.connection.mySlotIndex || 0;
+      const myRunId = (this.state.runConfig && this.state.runConfig.runId) || "";
       const me = this.state.players[myIdx];
       if (me) {
         me.party = [];
@@ -4137,6 +5106,14 @@
         me.inBattle = false;
         me.busy = false;
         me.tutorialComplete = false;
+        me.flashRev = 0;
+      }
+      if (myRunId) {
+        idbDelete(
+          FLASH_CACHE_DB_NAME,
+          FLASH_CACHE_STORE_NAME,
+          makeFlashCacheKey(this._getEffectiveUserId(), myRunId, myIdx)
+        ).catch(() => {});
       }
       if (!this.isClient()) {
         this.state.world = {
@@ -4167,6 +5144,7 @@
         this.sendJsonToHost(CH_CONTROL, { t: "flash_save_clear" });
         this.sendJsonToHost(CH_CONTROL, {
           t: "state_sync",
+          explicitReset: true,
           party: [],
           bagItems: [],
           money: 3000,
@@ -4229,13 +5207,37 @@
       }
       this._syncPeersToWasm(client.state.players);
       this._syncSoulLinkToWasm(client.state);
+      if (client._pendingRunConfigSync) {
+        const pendingCfg = client._pendingRunConfigSync;
+        client._pendingRunConfigSync = null;
+        this._dispatchWasmJson(
+          CH_CONTROL,
+          pendingCfg.fromPeerId || 1,
+          pendingCfg.msg || { t: "run_config_sync" },
+          pendingCfg.rawBytes
+        );
+      } else {
+        this._dispatchWasmJson(CH_CONTROL, 1, { t: "run_config_sync" });
+      }
+      if (client._pendingWorldSync) {
+        const pendingWorld = client._pendingWorldSync;
+        client._pendingWorldSync = null;
+        this._dispatchWasmJson(CH_WORLD_SYNC, pendingWorld.fromPeerId || 1, pendingWorld.msg);
+      }
+      const hasAutoJoinRoom =
+        typeof global.location !== "undefined" &&
+        global.location.search &&
+        Number(new URLSearchParams(global.location.search).get("room")) > 0;
       if (client._pendingWasmResetMode) {
         const pendingReset = client._pendingWasmResetMode;
         client._pendingWasmResetMode = "";
         this._resetNewGameInWasm(pendingReset);
-      } else if (client._pendingWasmResume || hasValidWasmFlashSave()) {
+      } else if (client._pendingWasmResume || (!hasAutoJoinRoom && client.state.connection.status === "offline" && hasValidWasmFlashSave())) {
         client._pendingWasmResume = false;
-        setTimeout(() => {
+        if (client._wasmResumeTimer) clearTimeout(client._wasmResumeTimer);
+        client._wasmResumeTimer = setTimeout(() => {
+          client._wasmResumeTimer = null;
+          if (client._pendingWasmResetMode || client.state.connection.status === "connecting") return;
           const m = client.wasmModule;
           if (m && typeof m._mp_on_snapshot_loaded === "function") {
             m._mp_on_snapshot_loaded();
@@ -4255,16 +5257,49 @@
       return false;
     },
 
+    _onResumeFallback(saveStatus) {
+      const st = Number(saveStatus);
+      client._resumeFallbackOccurred = true;
+      if (st !== 0) {
+        console.warn("[WASM] Flash resume fallback status=" + st);
+      }
+    },
+
     _onFlashSavedInWasm() {
+      if (client._suppressLocalFlashSync) return;
       const myRunId = client.state.runConfig && client.state.runConfig.runId;
-      writeFlashSaveMeta(myRunId);
+      const myIdx = client.state.connection.mySlotIndex || 0;
+      const mySlot = client.state.players[myIdx];
+      const hasProgress = Boolean(
+        mySlot && ((Array.isArray(mySlot.party) && mySlot.party.length > 0) || mySlot.tutorialComplete)
+      );
+      if (client._ignoreBlankSaveUntilMs && Date.now() < client._ignoreBlankSaveUntilMs && !hasProgress) {
+        return;
+      }
       const b64 = exportWasmFlashBase64();
+      const prevRev = mySlot ? Math.max(0, Number(mySlot.flashRev) || 0) : 0;
+      const nextRev = prevRev + 1;
+      if (mySlot) mySlot.flashRev = nextRev;
+      writeFlashSaveMeta(myRunId, Date.now(), {
+        userId: client._getEffectiveUserId(),
+        slotIndex: myIdx,
+        flashRev: nextRev,
+      });
       if (b64) {
-        const myIdx = client.state.connection.mySlotIndex || 0;
         if (!client._flashSavesBySlot) client._flashSavesBySlot = {};
         client._flashSavesBySlot[myIdx] = b64;
+        if (myRunId) {
+          client.cacheSlotFlashLocal(myRunId, myIdx, b64, nextRev, Date.now()).catch(() => {});
+        }
         if (client.isClient()) {
-          client.sendJsonToHost(CH_CONTROL, { t: "flash_save_sync", flashSaveB64: b64 });
+          client.sendJsonToHost(CH_CONTROL, {
+            t: "flash_save_sync",
+            flashSaveB64: b64,
+            flashRev: nextRev,
+          });
+        }
+        if (myRunId && client.state.auth && client.state.auth.status === "signed_in") {
+          client.syncSlotFlashToBackend(myRunId, myIdx, b64, nextRev, mySlot, { expectedRev: prevRev }).catch(() => {});
         }
       }
       if (client._insideBuildRunSnapshot) return;
@@ -4350,6 +5385,7 @@
 
     // Called from C EM_JS when local SaveBlock / Party / Map updates
     reportLocalState(jsonOrObj) {
+      if (client._suppressLocalFlashSync) return;
       const data = typeof jsonOrObj === "string" ? safeParseJson(jsonOrObj) : jsonOrObj;
       if (!data) return;
       const mySlot = client.state.players[client.state.connection.mySlotIndex];
@@ -4370,6 +5406,15 @@
       }
       if ("tutorialComplete" in sanitized) {
         sanitized.tutorialComplete = Boolean(sanitized.tutorialComplete);
+      }
+      const hasProgressNow = Boolean(
+        (Array.isArray(sanitized.party) && sanitized.party.length > 0) || sanitized.tutorialComplete
+      );
+      if (client._resumeFallbackOccurred && !hasProgressNow) {
+        return;
+      }
+      if (hasProgressNow) {
+        client._resumeFallbackOccurred = false;
       }
       Object.assign(mySlot, sanitized);
       if (typeof sanitized.mapGroup === "number" && typeof sanitized.mapNum === "number") {
@@ -4405,12 +5450,13 @@
 
     _dispatchBinaryToWasm(channel, fromPeerId, payloadBytes) {
       const m = client.wasmModule;
-      if (!m || typeof m._mp_ingest_packet !== "function" || typeof m._malloc !== "function") return;
+      if (!m || typeof m._mp_ingest_packet !== "function" || typeof m._malloc !== "function") return false;
       const ptr = m._malloc(payloadBytes.byteLength);
-      if (!ptr) return;
+      if (!ptr) return false;
       try {
         m.HEAPU8.set(payloadBytes, ptr);
         m._mp_ingest_packet(channel, fromPeerId, ptr, payloadBytes.byteLength);
+        return true;
       } finally {
         if (typeof m._free === "function") m._free(ptr);
       }
@@ -4418,10 +5464,10 @@
 
     _dispatchWasmJson(channel, fromPeerId, msg, optionalRawBytes) {
       const m = client.wasmModule;
-      if (!m || typeof m._mp_ingest_packet !== "function" || typeof m._malloc !== "function") return;
+      if (!m || typeof m._mp_ingest_packet !== "function" || typeof m._malloc !== "function") return false;
       const bytes = buildWasmJsonBytes(msg, optionalRawBytes);
-      if (!bytes || bytes.byteLength === 0) return;
-      this._dispatchBinaryToWasm(channel, fromPeerId, bytes);
+      if (!bytes || bytes.byteLength === 0) return false;
+      return this._dispatchBinaryToWasm(channel, fromPeerId, bytes);
     },
 
     _applySpeedToWasm(speed) {
@@ -4646,13 +5692,37 @@
     },
 
     _loadSnapshotIntoWasm(snapshot) {
+      if (client._wasmResumeTimer) {
+        clearTimeout(client._wasmResumeTimer);
+        client._wasmResumeTimer = null;
+      }
+      client._pendingWasmResetMode = "";
       const m = client.wasmModule;
       if (m && typeof m._mp_on_snapshot_loaded === "function") {
+        client._pendingWasmResume = false;
         m._mp_on_snapshot_loaded();
         this._syncSoulLinkToWasm(client.state);
       } else {
         client._pendingWasmResume = true;
       }
+    },
+
+    onTeammateBusyPrompt(partnerSlot, reasonStr) {
+      client.onTeammateBusyPrompt(partnerSlot, reasonStr);
+    },
+
+    onTeammateBusyResolved() {
+      client.onTeammateBusyResolved();
+    },
+
+    _resolveBusyTrainerPrompt(choice) {
+      const cleanChoice = Number(choice) === 1 ? 1 : 0;
+      const m = client.wasmModule;
+      if (m && typeof m._mp_resolve_busy_trainer_prompt === "function") {
+        m._mp_resolve_busy_trainer_prompt(cleanChoice);
+        return true;
+      }
+      return false;
     },
   };
 })(typeof window !== "undefined" ? window : globalThis);

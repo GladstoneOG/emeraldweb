@@ -182,7 +182,7 @@
     if (errBox) errBox.style.display = "none";
   }
 
-  function attemptJoinRoomPort(port) {
+  async function attemptJoinRoomPort(port) {
     const numPort = Number(port);
     if (!(numPort > 0)) return false;
     clearRoomsJoinError();
@@ -191,10 +191,11 @@
       showToast("danger", "Run Ended", "This Soul-Link Nuzlocke run has ended (Game Over).");
       return false;
     }
+    const isReturning = room && room.run_id ? await PokemonNet.hasReturningSlotForRun(room.run_id) : false;
     const badgeCount = Number(room && room.badge_count) || 0;
     const deathCount = Number(room && room.death_count) || 0;
     const caughtRoutesCount = Number(room && room.caught_routes_count) || 0;
-    if (badgeCount > 0 || deathCount > 0 || caughtRoutesCount > 0) {
+    if (!isReturning && (badgeCount > 0 || deathCount > 0 || caughtRoutesCount > 0)) {
       openLateJoinModal({
         source: "browser",
         port: numPort,
@@ -209,7 +210,7 @@
       });
       return false;
     }
-    PokemonNet.joinRoom(numPort);
+    PokemonNet.joinRoom(numPort, { confirmedProgressed: isReturning });
     closeModal("rooms-modal");
     return true;
   }
@@ -248,6 +249,9 @@
         openModal("rooms-modal");
         return;
       }
+    }
+    if (id === "slot-claim-modal" && PokemonNet._pendingSlotClaim) {
+      PokemonNet.cancelSlotClaim();
     }
     focusCanvas();
   }
@@ -489,6 +493,36 @@
     }
 
     setTextIfChanged($("room-count-num"), String((PokemonNet.remoteRooms || []).length));
+    renderAuthUi(state);
+  }
+
+  function renderAuthUi(state) {
+    const auth = (state && state.auth) || { status: "signed_out", username: "", userId: "" };
+    const signedIn = auth.status === "signed_in" && Boolean(auth.username);
+    const userBadge = $("account-user-badge");
+    const openAuthBtn = $("open-auth-btn");
+    const logoutBtn = $("account-logout-btn");
+    const savesAuthText = $("saves-auth-status-text");
+    const savesOpenAuthBtn = $("saves-open-auth-btn");
+
+    if (userBadge) {
+      userBadge.style.display = signedIn ? "inline-flex" : "none";
+      if (signedIn) setTextIfChanged(userBadge, `@${auth.username}`);
+    }
+    if (openAuthBtn) {
+      openAuthBtn.style.display = signedIn ? "none" : "inline-flex";
+    }
+    if (logoutBtn) {
+      logoutBtn.style.display = signedIn ? "inline-flex" : "none";
+    }
+    if (savesAuthText) {
+      savesAuthText.textContent = signedIn
+        ? `Signed in as @${auth.username} — Hosted & Joined runs sync to SQLite cloud storage.`
+        : "Sign in to sync Hosted & Joined multiplayer runs to your account across browsers & cache clears.";
+    }
+    if (savesOpenAuthBtn) {
+      savesOpenAuthBtn.style.display = signedIn ? "none" : "inline-flex";
+    }
   }
 
   function renderCoopBar(state) {
@@ -922,39 +956,162 @@
     );
   }
 
+  function summarizePartyShort(party) {
+    if (!Array.isArray(party) || party.length === 0) return "No Pokémon yet";
+    return party
+      .slice(0, 3)
+      .map((m) => `${m.nickname || m.species} Lv.${Number(m.level) || 1}`)
+      .join(", ") + (party.length > 3 ? ` +${party.length - 3}` : "");
+  }
+
+  function buildSlotChipsHtml(slots, myUserId) {
+    if (!Array.isArray(slots) || slots.length === 0) return "";
+    const occupied = slots.filter(
+      (s) => s && (s.userId || s.username || s.token || (Array.isArray(s.party) && s.party.length > 0) || s.tutorialComplete)
+    );
+    if (!occupied.length) return "";
+    return `<div class="slot-chip-list">${occupied
+      .map((s) => {
+        const idx = Number(s.slotIdx ?? s.slotIndex ?? 0);
+        const label = s.characterName || s.name || s.username || `Slot ${idx + 1}`;
+        const partyCnt = Array.isArray(s.party) ? s.party.length : 0;
+        const isMine = myUserId && s.userId && s.userId === myUserId;
+        return `<span class="slot-chip ${isMine ? "mine" : ""}">P${idx + 1} ${escapeHtml(label)} (${partyCnt} mon)</span>`;
+      })
+      .join("")}</div>`;
+  }
+
   async function renderSavedRunsLists() {
-    const runs = await PokemonNet.listSavedRuns();
+    const localRuns = await PokemonNet.listSavedRuns();
+    const cloud = PokemonNet.cloudRuns || { hostedRuns: [], joinedRuns: [] };
+    const auth = PokemonNet.state.auth || {};
+    const myUserId = auth.status === "signed_in" ? auth.userId : "";
+    const myToken = PokemonNet.state.connection && PokemonNet.state.connection.myToken;
+    const remoteRooms = PokemonNet.remoteRooms || [];
     const resumeEl = $("resume-runs-list");
     const savesEl = $("saves-list-container");
 
-    const buildRows = (includeDelete) => {
-      if (!runs.length) {
-        return `<div style="padding:12px;text-align:center;color:#55626d;">No saved campaign runs yet. Host a room or click "Save & Sync Now".</div>`;
+    const cloudHostedMap = new Map();
+    for (const r of cloud.hostedRuns || []) {
+      if (r && r.runId) cloudHostedMap.set(r.runId, r);
+    }
+    const cloudJoinedMap = new Map();
+    for (const r of cloud.joinedRuns || []) {
+      if (r && r.runId) cloudJoinedMap.set(r.runId, r);
+    }
+    const localMap = new Map();
+    for (const r of localRuns || []) {
+      if (r && r.runId) localMap.set(r.runId, r);
+    }
+
+    const hostedEntries = [];
+    const joinedEntries = [];
+    const soloEntries = [];
+    const seenIds = new Set();
+
+    for (const r of cloud.hostedRuns || []) {
+      if (!r || !r.runId) continue;
+      seenIds.add(r.runId);
+      hostedEntries.push({ kind: "hosted", runId: r.runId, cloud: r, local: localMap.get(r.runId) || null });
+    }
+    for (const r of cloud.joinedRuns || []) {
+      if (!r || !r.runId || seenIds.has(r.runId)) continue;
+      seenIds.add(r.runId);
+      joinedEntries.push({ kind: "joined", runId: r.runId, cloud: r, local: localMap.get(r.runId) || null });
+    }
+    for (const r of localRuns || []) {
+      if (!r || !r.runId || seenIds.has(r.runId)) continue;
+      seenIds.add(r.runId);
+      const slots = Array.isArray(r.playerSlots) ? r.playerSlots : [];
+      const peerInPeerSlot = slots.some(
+        (p, idx) =>
+          idx > 0 &&
+          p &&
+          ((myUserId && p.userId === myUserId) || (myToken && p.token === myToken))
+      );
+      const hostSlotMatch =
+        slots[0] && ((myUserId && slots[0].userId === myUserId) || (myToken && slots[0].token === myToken));
+      const hasOtherPeers = slots.slice(1).some(
+        (p) => p && (p.userId || p.token || (Array.isArray(p.party) && p.party.length > 0) || p.tutorialComplete)
+      );
+      if (peerInPeerSlot && !hostSlotMatch) {
+        joinedEntries.push({ kind: "joined", runId: r.runId, cloud: null, local: r });
+      } else if (hasOtherPeers) {
+        hostedEntries.push({ kind: "hosted", runId: r.runId, cloud: null, local: r });
+      } else {
+        soloEntries.push({ kind: "solo", runId: r.runId, cloud: null, local: r });
       }
-      return runs
-        .map((r) => {
-          const badgeCount = r.world && Array.isArray(r.world.badges) ? r.world.badges.filter(Boolean).length : 0;
-          const seed = (r.runConfig && r.runConfig.seed) || "—";
-          const name = (r.runConfig && r.runConfig.roomName) || r.runId;
-          const savedStr = r.savedAt ? new Date(r.savedAt).toLocaleString() : "";
+    }
+
+    const renderGroupRows = (entries, emptyText, includeManageBtns, groupType) => {
+      if (!entries.length) {
+        return `<div class="save-group-empty">${escapeHtml(emptyText)}</div>`;
+      }
+      return entries
+        .map(({ cloud: cr, local: lr, runId }) => {
+          const worldObj = (cr && cr.worldState && cr.worldState.world) || (lr && lr.world) || {};
+          const badgeCount = Array.isArray(worldObj.badges) ? worldObj.badges.filter(Boolean).length : 0;
+          const seed = (cr && cr.seed) || (lr && lr.runConfig && lr.runConfig.seed) || "—";
+          const name = (cr && cr.title) || (lr && lr.runConfig && lr.runConfig.roomName) || runId;
+          const updatedTs = (cr && cr.updatedAt) || (lr && lr.savedAt) || "";
+          const savedStr = updatedTs ? new Date(updatedTs).toLocaleString() : "";
+          const slots = (cr && cr.slots) || (lr && lr.playerSlots) || [];
+          const activeRoom =
+            remoteRooms.find((rm) => rm && rm.run_id === runId) ||
+            (cr && Number(cr.activeRoomPort) > 0 ? { game_port: Number(cr.activeRoomPort) } : null);
+          const activePort = activeRoom ? Number(activeRoom.game_port) : 0;
+          const myPeerSlot =
+            slots.find((s, idx) => {
+              const sIdx = Number(s && (s.slotIdx ?? s.slotIndex ?? idx));
+              return s && ((myUserId && s.userId === myUserId) || (myToken && s.token === myToken) || (cr && Number(cr.mySlotIdx) === sIdx));
+            }) || null;
+
+          let actionsHtml = "";
+          if (groupType === "joined") {
+            const joinBtnHtml =
+              activePort > 0
+                ? `<button class="em-btn primary sm" type="button" data-join-room="${activePort}">Join Room #${activePort}</button>`
+                : `<span class="em-badge sm" title="Host is not currently online">Host Offline</span>`;
+            const localResumeBtn = lr
+              ? `<button class="em-btn sm" type="button" data-resume-run="${escapeHtml(runId)}" title="Re-host using local snapshot">Re-Host</button>`
+              : cr
+                ? `<button class="em-btn sm" type="button" data-resume-cloud-peer="${escapeHtml(runId)}" title="Load your saved slot offline">Load Slot</button>`
+                : "";
+            actionsHtml = `${joinBtnHtml}${localResumeBtn}`;
+          } else {
+            const resumeAttr = cr && !lr ? `data-resume-cloud-run="${escapeHtml(runId)}"` : `data-resume-run="${escapeHtml(runId)}"`;
+            const resumeLabel = groupType === "hosted" ? "Resume & Host" : "Resume";
+            const exportBtn =
+              includeManageBtns && lr
+                ? `<button class="em-btn sm" type="button" data-export-run="${escapeHtml(runId)}">Export</button>`
+                : "";
+            const delAttr = cr ? `data-delete-cloud-run="${escapeHtml(runId)}"` : `data-delete-run="${escapeHtml(runId)}"`;
+            const delBtn = includeManageBtns
+              ? `<button class="em-btn danger sm" type="button" ${delAttr}>✕</button>`
+              : "";
+            actionsHtml = `<button class="em-btn primary sm" type="button" ${resumeAttr}>${resumeLabel}</button>${exportBtn}${delBtn}`;
+          }
+
+          const peerNote =
+            groupType === "joined" && myPeerSlot
+              ? ` • Your Party: ${escapeHtml(summarizePartyShort(myPeerSlot.party))}`
+              : cr && cr.hostUsername
+                ? ` • Host: @${escapeHtml(cr.hostUsername)}`
+                : "";
+
           return `
             <div class="em-list-row">
-              <div style="min-width:0;">
+              <div style="min-width:0;flex:1;">
                 <div class="gba-font" style="font-weight:700;color:#154c3e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
                   ${escapeHtml(name)}
                 </div>
                 <div style="font-size:11px;color:#55626d;">
-                  Seed: ${escapeHtml(seed)} • ${badgeCount}/8 Badges • ${escapeHtml(savedStr)}
+                  Seed: ${escapeHtml(seed)} • ${badgeCount}/8 Badges${peerNote}${savedStr ? ` • ${escapeHtml(savedStr)}` : ""}
                 </div>
+                ${groupType !== "solo" ? buildSlotChipsHtml(slots, myUserId) : ""}
               </div>
-              <div style="display:flex;gap:4px;flex-shrink:0;">
-                <button class="em-btn primary sm" type="button" data-resume-run="${escapeHtml(r.runId)}">Host Resume</button>
-                ${
-                  includeDelete
-                    ? `<button class="em-btn sm" type="button" data-export-run="${escapeHtml(r.runId)}">Export</button>
-                       <button class="em-btn danger sm" type="button" data-delete-run="${escapeHtml(r.runId)}">✕</button>`
-                    : ""
-                }
+              <div style="display:flex;gap:4px;flex-shrink:0;align-items:center;flex-wrap:wrap;">
+                ${actionsHtml}
               </div>
             </div>
           `;
@@ -962,8 +1119,19 @@
         .join("");
     };
 
-    if (resumeEl) setHtmlIfChanged(resumeEl, buildRows(false));
-    if (savesEl) setHtmlIfChanged(savesEl, buildRows(true));
+    const buildGroupedHtml = (includeManageBtns) => {
+      return (
+        `<div class="save-group-header"><span>Hosted Runs</span><span>${hostedEntries.length}</span></div>` +
+        renderGroupRows(hostedEntries, "No hosted multiplayer runs yet.", includeManageBtns, "hosted") +
+        `<div class="save-group-header"><span>Joined Runs (Peer)</span><span>${joinedEntries.length}</span></div>` +
+        renderGroupRows(joinedEntries, "No joined peer runs yet.", includeManageBtns, "joined") +
+        `<div class="save-group-header"><span>Solo Runs (Local IndexedDB)</span><span>${soloEntries.length}</span></div>` +
+        renderGroupRows(soloEntries, "No solo local runs yet.", includeManageBtns, "solo")
+      );
+    };
+
+    if (resumeEl) setHtmlIfChanged(resumeEl, buildGroupedHtml(false));
+    if (savesEl) setHtmlIfChanged(savesEl, buildGroupedHtml(true));
   }
 
   function renderSavesModal() {
@@ -1159,6 +1327,100 @@
     });
   }
 
+  function dismissTeammateBusyPrompt() {
+    const stack = $("toast-stack");
+    if (!stack) return;
+    const prev = stack.querySelector("[data-teammate-busy-prompt]");
+    if (prev) prev.remove();
+  }
+
+  function showTeammateBusyPrompt(payload) {
+    const stack = $("toast-stack");
+    if (!stack || !payload) return;
+    dismissTeammateBusyPrompt();
+
+    const partnerName = payload.targetName || "Partner";
+    const el = document.createElement("div");
+    el.className = "em-panel em-toast";
+    el.dataset.teammateBusyPrompt = "1";
+    el.style.borderLeft = "5px solid #c99416";
+    el.innerHTML = `
+      <div class="gba-font" style="font-size:11px;font-weight:700;color:#154c3e;">${escapeHtml(payload.title || "PARTNER BUSY")}</div>
+      <div style="font-size:12px;margin-top:2px;">${escapeHtml(payload.message || `${partnerName} is busy.`)} Wait for them or proceed with an AI partner?</div>
+      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
+        <button class="em-btn primary sm" type="button" data-teammate-prompt-act="wait">Wait for Partner</button>
+        <button class="em-btn gold sm" type="button" data-teammate-prompt-act="ai">Proceed with AI Partner</button>
+      </div>
+    `;
+    stack.appendChild(el);
+
+    el.addEventListener("click", (ev) => {
+      const btn = ev.target.closest("[data-teammate-prompt-act]");
+      if (!btn) return;
+      const act = btn.dataset.teammatePromptAct;
+      if (act === "wait") {
+        if (global.PokemonWasmBridge && typeof global.PokemonWasmBridge._resolveBusyTrainerPrompt === "function") {
+          global.PokemonWasmBridge._resolveBusyTrainerPrompt(0);
+        }
+        el.style.borderLeft = "5px solid #2d9575";
+        el.innerHTML = `
+          <div class="gba-font" style="font-size:11px;font-weight:700;color:#154c3e;">WAITING FOR ${escapeHtml(partnerName.toUpperCase())}...</div>
+          <div style="font-size:12px;margin-top:2px;">Paused before battle. Will start synced 2v2 as soon as ${escapeHtml(partnerName)} is ready.</div>
+          <div style="display:flex;gap:6px;margin-top:8px;">
+            <button class="em-btn gold sm" type="button" data-teammate-prompt-act="ai">Proceed with AI Partner</button>
+          </div>
+        `;
+        focusCanvas();
+      } else if (act === "ai") {
+        if (global.PokemonWasmBridge && typeof global.PokemonWasmBridge._resolveBusyTrainerPrompt === "function") {
+          global.PokemonWasmBridge._resolveBusyTrainerPrompt(1);
+        }
+        el.remove();
+        focusCanvas();
+      }
+    });
+  }
+
+  function openSlotClaimModal(payload) {
+    if (!payload) return;
+    const heading = $("slot-claim-heading");
+    if (heading) {
+      setTextIfChanged(heading, `${payload.roomName || "Room"} — Claim Offline Slot or Join New`);
+    }
+    const listEl = $("slot-claim-list");
+    if (listEl) {
+      const slots = Array.isArray(payload.offlineSlots) ? payload.offlineSlots : [];
+      setHtmlIfChanged(
+        listEl,
+        slots
+          .map((s) => {
+            const idx = Number(s.slotIndex) || 1;
+            const uname = s.username ? ` (@${s.username})` : "";
+            const tutText = s.tutorialComplete ? "Tutorial Complete" : "In Tutorial";
+            return `
+              <div class="em-list-row">
+                <div style="min-width:0;flex:1;">
+                  <div class="gba-font" style="font-weight:700;color:#154c3e;">
+                    P${idx + 1} ${escapeHtml(s.name || `Trainer ${idx + 1}`)}${escapeHtml(uname)}
+                  </div>
+                  <div style="font-size:11px;color:#55626d;">
+                    ${escapeHtml(tutText)} • ${escapeHtml(summarizePartyShort(s.party))}
+                  </div>
+                </div>
+                <button class="em-btn primary sm" type="button" data-claim-slot="${idx}">Claim P${idx + 1}</button>
+              </div>
+            `;
+          })
+          .join("")
+      );
+    }
+    const newBtn = $("slot-claim-new-btn");
+    if (newBtn) {
+      newBtn.style.display = payload.hasEmptySlot ? "inline-flex" : "none";
+    }
+    openModal("slot-claim-modal");
+  }
+
   function openLateJoinModal(ctx) {
     if (!ctx) return;
     pendingLateJoinCtx = ctx;
@@ -1219,12 +1481,36 @@
       showToast("gold", payload.title || "AI / Solo Fallback", msg);
       return;
     }
+    if (reason === "teammate_busy_prompt" && payload) {
+      showTeammateBusyPrompt(payload);
+      return;
+    }
+    if (reason === "teammate_busy_resolved") {
+      dismissTeammateBusyPrompt();
+      focusCanvas();
+      return;
+    }
     if (reason === "busy_battle_prompt" && payload) {
       showBusyBattlePrompt(payload);
       return;
     }
+    if (reason === "slot_claim_required" && payload) {
+      openSlotClaimModal(payload);
+      return;
+    }
     if (reason === "late_join_confirm_needed" && payload) {
       openLateJoinModal({ source: "welcome", ...payload });
+      return;
+    }
+    if (reason === "auth") {
+      renderAuthUi(state);
+      if ($("saves-modal") && $("saves-modal").classList.contains("open")) renderSavedRunsLists();
+      if ($("rooms-modal") && $("rooms-modal").classList.contains("open")) renderSavedRunsLists();
+      return;
+    }
+    if (reason === "saves") {
+      if ($("saves-modal") && $("saves-modal").classList.contains("open")) renderSavesModal();
+      if ($("rooms-modal") && $("rooms-modal").classList.contains("open")) renderSavedRunsLists();
       return;
     }
     if (reason === "join_rejected" && payload) {
@@ -1296,14 +1582,21 @@
     $("rnd-bst").checked = p.similarBst;
   }
 
+  function normalizeSeedInput(raw) {
+    return String(raw || "")
+      .replace(/[^\x20-\x7e]/g, "")
+      .trim()
+      .slice(0, 31);
+  }
+
   function syncHostRandomizerPresetToForm(resetToDefault) {
     const presetSel = $("setup-randomizer-preset");
     if (!presetSel) return;
     if (resetToDefault || !PokemonConstants.RANDOMIZER_PRESETS[presetSel.value]) {
       const cfgPreset = PokemonNet.state.runConfig && PokemonNet.state.runConfig.randomizerPreset;
       presetSel.value = PokemonConstants.RANDOMIZER_PRESETS[cfgPreset] ? cfgPreset : "balanced";
+      applyRandomizerPresetToForm(presetSel.value);
     }
-    applyRandomizerPresetToForm(presetSel.value);
   }
 
   function applyNuzlockePresetToForm(presetName) {
@@ -1319,10 +1612,15 @@
   }
 
   function collectHostRunConfigFromForm() {
+    const rawSeed = $("setup-seed-input") ? $("setup-seed-input").value : "";
+    const normalizedSeed = normalizeSeedInput(rawSeed) || normalizeSeedInput(PokemonNet.state.runConfig.seed);
+    if ($("setup-seed-input") && normalizedSeed) {
+      $("setup-seed-input").value = normalizedSeed;
+    }
     return {
       roomName: $("setup-room-name").value.trim() || `${$("player-name-input").value}'s Hoenn Run`,
       roomPort: parseInt($("setup-room-port").value, 10) || 27462,
-      seed: $("setup-seed-input").value.trim() || PokemonNet.state.runConfig.seed,
+      seed: normalizedSeed,
       soulLinkMode: $("setup-soullink-mode").value,
       battleAutoPull: $("setup-battle-autopull").checked,
       freshReset: Boolean($("setup-fresh-reset") && $("setup-fresh-reset").checked),
@@ -1695,10 +1993,10 @@
     }
 
     $("switch-to-create-btn").addEventListener("click", () => {
-      if ($("setup-randomizer-preset")) {
-        $("setup-randomizer-preset").value = "balanced";
-      }
       syncHostRandomizerPresetToForm(false);
+      if ($("setup-fresh-reset")) {
+        $("setup-fresh-reset").checked = true;
+      }
       document.querySelector('[data-rooms-tab="create"]').click();
     });
     $("refresh-rooms-btn").addEventListener("click", () => {
@@ -1716,7 +2014,10 @@
     });
     $("randomize-seed-btn").addEventListener("click", () => {
       const words = ["RAYQUAZA", "EMERALD", "HOENN", "METEOR", "LATIAS", "KYOGRE", "SOOTOPOLIS"];
-      $("setup-seed-input").value = `${words[Math.floor(Math.random() * words.length)]}-${Math.floor(1000 + Math.random() * 8999)}`;
+      $("setup-seed-input").value = `${words[Math.floor(Math.random() * words.length)]}-${Math.floor(1000 + Math.random() * 8999)}`.slice(0, 31);
+      if ($("setup-fresh-reset")) {
+        $("setup-fresh-reset").checked = true;
+      }
     });
     $("setup-randomizer-preset").addEventListener("change", (e) => applyRandomizerPresetToForm(e.target.value));
     $("setup-nuzlocke-preset").addEventListener("change", (e) => applyNuzlockePresetToForm(e.target.value));
@@ -1728,23 +2029,80 @@
       closeModal("rooms-modal");
     });
 
-    // Rooms list & Resume picker delegation
-    $("rooms-modal").addEventListener("click", async (e) => {
+    async function handleSavedRunsAction(e, modalToClose) {
       const joinBtn = e.target.closest("[data-join-room]");
       if (joinBtn) {
         if (joinBtn.disabled) return;
         attemptJoinRoomPort(joinBtn.dataset.joinRoom);
-        return;
+        return true;
       }
       const resBtn = e.target.closest("[data-resume-run]");
       if (resBtn) {
         const runs = await PokemonNet.listSavedRuns();
         const found = runs.find((r) => r.runId === resBtn.dataset.resumeRun);
         if (found) {
-          PokemonNet.hostRoom(null, found);
-          closeModal("rooms-modal");
+          await PokemonNet.hostRoom(null, found);
+          closeModal(modalToClose);
         }
+        return true;
       }
+      const resCloudBtn = e.target.closest("[data-resume-cloud-run]");
+      if (resCloudBtn) {
+        const runId = resCloudBtn.dataset.resumeCloudRun;
+        const cloudRun = (PokemonNet.cloudRuns && PokemonNet.cloudRuns.hostedRuns || []).find((r) => r.runId === runId);
+        if (cloudRun) {
+          const snap = await PokemonNet.buildSnapshotFromCloudRun(cloudRun, 0);
+          if (snap) {
+            await PokemonNet.hostRoom(null, snap);
+            closeModal(modalToClose);
+          }
+        }
+        return true;
+      }
+      const resCloudPeerBtn = e.target.closest("[data-resume-cloud-peer]");
+      if (resCloudPeerBtn) {
+        const runId = resCloudPeerBtn.dataset.resumeCloudPeer;
+        const cloudRun = (PokemonNet.cloudRuns && PokemonNet.cloudRuns.joinedRuns || []).find((r) => r.runId === runId);
+        if (cloudRun) {
+          const myIdx = Number.isInteger(Number(cloudRun.mySlotIdx)) ? Number(cloudRun.mySlotIdx) : 1;
+          const snap = await PokemonNet.buildSnapshotFromCloudRun(cloudRun, myIdx);
+          if (snap) {
+            await PokemonNet.applySnapshotLocal(snap, false);
+            closeModal(modalToClose);
+            showToast("ok", "Slot Loaded", `Loaded your saved Trainer Slot for ${cloudRun.title || runId}.`);
+          }
+        }
+        return true;
+      }
+      const exportBtn = e.target.closest("[data-export-run]");
+      if (exportBtn) {
+        const runs = await PokemonNet.listSavedRuns();
+        const found = runs.find((r) => r.runId === exportBtn.dataset.exportRun);
+        if (found) downloadJson(found, `pokemon_emerald_run_${found.runId}.json`);
+        return true;
+      }
+      const delCloudBtn = e.target.closest("[data-delete-cloud-run]");
+      if (delCloudBtn) {
+        const runId = delCloudBtn.dataset.deleteCloudRun;
+        await PokemonNet.deleteCloudRun(runId);
+        await PokemonNet.deleteSavedRun(runId);
+        renderSavesModal();
+        renderSavedRunsLists();
+        return true;
+      }
+      const delBtn = e.target.closest("[data-delete-run]");
+      if (delBtn) {
+        await PokemonNet.deleteSavedRun(delBtn.dataset.deleteRun);
+        renderSavesModal();
+        renderSavedRunsLists();
+        return true;
+      }
+      return false;
+    }
+
+    // Rooms list & Resume picker delegation
+    $("rooms-modal").addEventListener("click", async (e) => {
+      await handleSavedRunsAction(e, "rooms-modal");
     });
 
     // Sidebar Tabs & LinkID Highlighting
@@ -1962,25 +2320,110 @@
     });
 
     $("saves-list-container").addEventListener("click", async (e) => {
-      const resumeBtn = e.target.closest("[data-resume-run]");
-      const exportBtn = e.target.closest("[data-export-run]");
-      const delBtn = e.target.closest("[data-delete-run]");
-      const runs = await PokemonNet.listSavedRuns();
-
-      if (resumeBtn) {
-        const found = runs.find((r) => r.runId === resumeBtn.dataset.resumeRun);
-        if (found) {
-          PokemonNet.hostRoom(null, found);
-          closeModal("saves-modal");
-        }
-      } else if (exportBtn) {
-        const found = runs.find((r) => r.runId === exportBtn.dataset.exportRun);
-        if (found) downloadJson(found, `pokemon_emerald_run_${found.runId}.json`);
-      } else if (delBtn) {
-        await PokemonNet.deleteSavedRun(delBtn.dataset.deleteRun);
-        renderSavesModal();
-      }
+      await handleSavedRunsAction(e, "saves-modal");
     });
+
+    // Account Auth Modal & Controls
+    let authModalMode = "login";
+    const openAuthWithMode = (mode) => {
+      authModalMode = mode === "register" ? "register" : "login";
+      for (const t of document.querySelectorAll("[data-auth-tab]")) {
+        t.classList.toggle("active", t.dataset.authTab === authModalMode);
+      }
+      const submitBtn = $("auth-submit-btn");
+      if (submitBtn) submitBtn.textContent = authModalMode === "register" ? "Create Account" : "Sign In";
+      const pwInput = $("auth-password-input");
+      if (pwInput) pwInput.autocomplete = authModalMode === "register" ? "new-password" : "current-password";
+      const errBox = $("auth-error-box");
+      if (errBox) errBox.style.display = "none";
+      openModal("auth-modal");
+      if ($("auth-username-input")) $("auth-username-input").focus();
+    };
+    if ($("open-auth-btn")) $("open-auth-btn").addEventListener("click", () => openAuthWithMode("login"));
+    if ($("saves-open-auth-btn")) $("saves-open-auth-btn").addEventListener("click", () => openAuthWithMode("login"));
+    if ($("account-logout-btn")) {
+      $("account-logout-btn").addEventListener("click", async () => {
+        await PokemonNet.logoutAccount();
+        showToast("info", "Signed Out", "Switched to Guest / Local mode.");
+        focusCanvas();
+      });
+    }
+    for (const tab of document.querySelectorAll("[data-auth-tab]")) {
+      tab.addEventListener("click", () => {
+        authModalMode = tab.dataset.authTab === "register" ? "register" : "login";
+        for (const t of document.querySelectorAll("[data-auth-tab]")) {
+          t.classList.toggle("active", t === tab);
+        }
+        const submitBtn = $("auth-submit-btn");
+        if (submitBtn) submitBtn.textContent = authModalMode === "register" ? "Create Account" : "Sign In";
+        const pwInput = $("auth-password-input");
+        if (pwInput) pwInput.autocomplete = authModalMode === "register" ? "new-password" : "current-password";
+        if ($("auth-error-box")) $("auth-error-box").style.display = "none";
+      });
+    }
+    if ($("auth-form")) {
+      $("auth-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const username = ($("auth-username-input") && $("auth-username-input").value.trim()) || "";
+        const password = ($("auth-password-input") && $("auth-password-input").value) || "";
+        const errBox = $("auth-error-box");
+        const errText = $("auth-error-text");
+        const submitBtn = $("auth-submit-btn");
+        if (submitBtn) submitBtn.disabled = true;
+        const res =
+          authModalMode === "register"
+            ? await PokemonNet.registerAccount(username, password)
+            : await PokemonNet.loginAccount(username, password);
+        if (submitBtn) submitBtn.disabled = false;
+        if (!res || !res.ok) {
+          if (errBox && errText) {
+            errText.textContent = (res && res.error) || "Authentication failed";
+            errBox.style.display = "block";
+          }
+          return;
+        }
+        if ($("auth-password-input")) $("auth-password-input").value = "";
+        closeModal("auth-modal");
+        showToast("ok", "Account Signed In", `Welcome, @${res.username}!`);
+        focusCanvas();
+      });
+    }
+    if ($("saves-refresh-cloud-btn")) {
+      $("saves-refresh-cloud-btn").addEventListener("click", async () => {
+        await PokemonNet.refreshCloudRuns();
+        renderSavedRunsLists();
+      });
+    }
+    if ($("rooms-refresh-saves-btn")) {
+      $("rooms-refresh-saves-btn").addEventListener("click", async () => {
+        await PokemonNet.refreshCloudRuns();
+        renderSavedRunsLists();
+      });
+    }
+
+    // Slot-Claim Modal Handlers
+    if ($("slot-claim-list")) {
+      $("slot-claim-list").addEventListener("click", async (e) => {
+        const btn = e.target.closest("[data-claim-slot]");
+        if (!btn) return;
+        const slotIdx = Number(btn.dataset.claimSlot);
+        $("slot-claim-modal").classList.remove("open");
+        await PokemonNet.confirmSlotClaim(slotIdx);
+        focusCanvas();
+      });
+    }
+    if ($("slot-claim-new-btn")) {
+      $("slot-claim-new-btn").addEventListener("click", () => {
+        $("slot-claim-modal").classList.remove("open");
+        PokemonNet.joinAsNewFromClaim();
+        focusCanvas();
+      });
+    }
+    if ($("slot-claim-cancel-btn")) {
+      $("slot-claim-cancel-btn").addEventListener("click", () => {
+        closeModal("slot-claim-modal");
+      });
+    }
 
     // Phase 0 Preview Sim Buttons (available until WASM boots)
     $("sim-catch-btn").addEventListener("click", () => {
@@ -2164,6 +2607,7 @@
     bindEvents();
     PokemonNet.subscribe(renderAll);
     renderAll(PokemonNet.state, "init");
+    PokemonNet.validateSession().catch(() => {});
     PokemonNet.refreshRooms();
     setInterval(() => PokemonNet.refreshRooms(), 3500);
     startGamepadPolling();

@@ -89,30 +89,116 @@ __attribute__((weak)) void MpTrade_ApplyCommitFromBridge(void)
 /* -------------------------------------------------------------------------
  * Minimal Zero-Heap JSON Helpers (tailored to net_bridge.js JSON schemas)
  * ------------------------------------------------------------------------- */
+static const char *JsonSkipString(const char *p, const char *end)
+{
+    if (!p || p >= end || *p != '"')
+        return p;
+    p++;
+    while (p < end && *p != '\0') {
+        if (*p == '\\') {
+            p++;
+            if (p < end && *p != '\0')
+                p++;
+            continue;
+        }
+        if (*p == '"')
+            return p + 1;
+        p++;
+    }
+    return p;
+}
+
+static const char *JsonSkipNested(const char *p, const char *end)
+{
+    if (!p || p >= end || (*p != '{' && *p != '['))
+        return p;
+    char openCh = *p;
+    char closeCh = (openCh == '{') ? '}' : ']';
+    int depth = 0;
+    while (p < end && *p != '\0') {
+        if (*p == '"') {
+            p = JsonSkipString(p, end);
+            continue;
+        }
+        if (*p == openCh) {
+            depth++;
+        } else if (*p == closeCh) {
+            depth--;
+            if (depth <= 0)
+                return p + 1;
+        }
+        p++;
+    }
+    return p;
+}
+
 static const char *JsonFindKey(const char *json, const char *key)
 {
-    char pattern[64];
-    int n = snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-    if (n <= 0 || (size_t)n >= sizeof(pattern))
+    if (!json || !key || key[0] == '\0')
         return NULL;
 
-    const char *p = strstr(json, pattern);
-    if (!p)
+    size_t keyLen = strlen(key);
+    if (keyLen >= 64u)
         return NULL;
-    p += n;
+
+    const char *p = json;
     while (*p && isspace((unsigned char)*p))
         p++;
-    if (*p != ':')
-        return NULL;
-    p++;
-    while (*p && isspace((unsigned char)*p))
+
+    const char *end = json + strlen(json);
+    if (*p == '{') {
+        end = JsonSkipNested(p, end);
         p++;
-    return p;
+    }
+
+    while (p < end && *p != '\0') {
+        while (p < end && (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n' || *p == ','))
+            p++;
+        if (p >= end || *p == '\0' || *p == '}')
+            break;
+
+        if (*p == '{' || *p == '[') {
+            p = JsonSkipNested(p, end);
+            continue;
+        }
+        if (*p != '"') {
+            p++;
+            continue;
+        }
+
+        const char *strStart = p + 1;
+        const char *afterStr = JsonSkipString(p, end);
+        const char *strEnd = (afterStr > strStart && afterStr[-1] == '"') ? (afterStr - 1) : afterStr;
+        p = afterStr;
+
+        while (p < end && isspace((unsigned char)*p))
+            p++;
+        if (p >= end || *p != ':')
+            continue;
+        p++;
+        while (p < end && isspace((unsigned char)*p))
+            p++;
+
+        if ((size_t)(strEnd - strStart) == keyLen && memcmp(strStart, key, keyLen) == 0)
+            return p;
+
+        if (p < end) {
+            if (*p == '"')
+                p = JsonSkipString(p, end);
+            else if (*p == '{' || *p == '[')
+                p = JsonSkipNested(p, end);
+            else {
+                while (p < end && *p != ',' && *p != '}')
+                    p++;
+            }
+        }
+    }
+    return NULL;
 }
 
 static bool JsonExtractString(const char *json, const char *key, char *out, size_t maxLen)
 {
-    if (!json || !out || maxLen == 0)
+    if (!json || !key || !out || maxLen == 0)
         return false;
     out[0] = '\0';
     const char *p = JsonFindKey(json, key);
@@ -131,7 +217,7 @@ static bool JsonExtractString(const char *json, const char *key, char *out, size
 
 static bool JsonExtractInt(const char *json, const char *key, int32_t *outVal)
 {
-    if (!json || !outVal)
+    if (!json || !key || !outVal)
         return false;
     const char *p = JsonFindKey(json, key);
     if (!p)
@@ -146,14 +232,14 @@ static bool JsonExtractInt(const char *json, const char *key, int32_t *outVal)
 
 static bool JsonExtractBool(const char *json, const char *key, bool defaultVal)
 {
-    if (!json)
+    if (!json || !key)
         return defaultVal;
     const char *p = JsonFindKey(json, key);
     if (!p)
         return defaultVal;
-    if (strncmp(p, "true", 4) == 0)
+    if (strncmp(p, "true", 4) == 0 && !isalnum((unsigned char)p[4]) && p[4] != '_')
         return true;
-    if (strncmp(p, "false", 5) == 0)
+    if (strncmp(p, "false", 5) == 0 && !isalnum((unsigned char)p[5]) && p[5] != '_')
         return false;
     return defaultVal;
 }
@@ -178,13 +264,16 @@ static uint32_t ParseRandomizerFlagsFromJson(const char *json, uint8_t preset)
         { "similarBst",         MP_RANDO_F_SIMILAR_BST,         true  },
     };
     const char *scope = JsonFindKey(json, "randomizerToggles");
-    if (!scope)
+    bool hasObjScope = (scope != NULL && *scope == '{');
+    if (scope == NULL)
         scope = json;
 
     uint32_t flags = 0;
     for (size_t i = 0; i < sizeof(kRandoKeys) / sizeof(kRandoKeys[0]); i++) {
         bool def = (preset == MP_RANDO_OFF) ? false : kRandoKeys[i].defBalanced;
-        if (JsonExtractBool(scope, kRandoKeys[i].key, def))
+        bool enabled = hasObjScope ? JsonExtractBool(scope, kRandoKeys[i].key, def)
+                                   : ((scope == json) ? JsonExtractBool(json, kRandoKeys[i].key, def) : def);
+        if (enabled)
             flags |= kRandoKeys[i].bit;
     }
     return flags;
@@ -206,12 +295,15 @@ static uint32_t ParseNuzlockeFlagsFromJson(const char *json)
         { "whiteoutGameOver", MP_NUZ_F_WHITEOUT_GAME_OVER, false },
     };
     const char *scope = JsonFindKey(json, "nuzlockeToggles");
-    if (!scope)
+    bool hasObjScope = (scope != NULL && *scope == '{');
+    if (scope == NULL)
         scope = json;
 
     uint32_t flags = 0;
     for (size_t i = 0; i < sizeof(kNuzKeys) / sizeof(kNuzKeys[0]); i++) {
-        if (JsonExtractBool(scope, kNuzKeys[i].key, kNuzKeys[i].defVal))
+        bool enabled = hasObjScope ? JsonExtractBool(scope, kNuzKeys[i].key, kNuzKeys[i].defVal)
+                                   : ((scope == json) ? JsonExtractBool(json, kNuzKeys[i].key, kNuzKeys[i].defVal) : kNuzKeys[i].defVal);
+        if (enabled)
             flags |= kNuzKeys[i].bit;
     }
     return flags;
@@ -297,9 +389,21 @@ static void HandleControlBinary(uint16_t fromPeerId, uint8_t fromSlot, uint8_t o
             memcpy(&incoming, payload, sizeof(incoming));
             uint8_t savedLocalSlot = sRunConfig.localSlot;
             uint8_t savedIsHost = sRunConfig.isHost;
+            uint8_t mult = incoming.speedMultiplier;
+            if (mult < 1) mult = 1;
+            if (mult > 3) mult = 3;
             sRunConfig = incoming;
+            sRunConfig.seedStr[sizeof(sRunConfig.seedStr) - 1] = '\0';
+            if (sRunConfig.seedHash == 0 && sRunConfig.seedStr[0] != '\0')
+                sRunConfig.seedHash = MpNet_HashSeedString(sRunConfig.seedStr);
+            sRunConfig.speedMultiplier = mult;
             sRunConfig.localSlot = savedLocalSlot;
             sRunConfig.isHost = savedIsHost;
+            sHasConfigBaseline = true;
+            sLastSeedHash = sRunConfig.seedHash;
+            sLastRandoFlags = sRunConfig.randomizerFlags;
+            sLastNuzFlags = sRunConfig.nuzlockeFlags;
+            sLastSoulLinkMode = sRunConfig.soulLinkMode;
             WasmPlatform_SetSpeedMultiplier(sRunConfig.speedMultiplier);
             MpRandomizer_OnRunConfigChanged(&sRunConfig);
         }
@@ -322,6 +426,7 @@ static void HandleIncomingJson(uint16_t fromPeerId, const char *json, size_t len
 
     if (strcmp(typeStr, "run_config_sync") == 0 || strcmp(typeStr, "snapshot_sync") == 0) {
         MpNet_RefreshConfigFromBridge();
+        MpRandomizer_OnRunConfigChanged(&sRunConfig);
     } else if (strcmp(typeStr, "speed_set") == 0) {
         if (MpNet_IsHost() && fromPeerId != 0 && fromPeerId != MpNet_GetLocalPeerId())
             return;
@@ -472,7 +577,7 @@ void MpNet_RefreshConfigFromBridge(void)
     sRunConfig.speedMultiplier = (uint8_t)bridgeSpeed;
     WasmPlatform_SetSpeedMultiplier(bridgeSpeed);
 
-    char cfgJson[1536];
+    char cfgJson[2048];
     if (WasmMp_GetRunConfigJson(cfgJson, sizeof(cfgJson))) {
         char tmp[64];
         if (JsonExtractString(cfgJson, "seed", tmp, sizeof(tmp)) && tmp[0] != '\0') {
@@ -512,12 +617,16 @@ void MpNet_RefreshConfigFromBridge(void)
         sLastRandoFlags != sRunConfig.randomizerFlags ||
         sLastNuzFlags != sRunConfig.nuzlockeFlags ||
         sLastSoulLinkMode != sRunConfig.soulLinkMode) {
+        bool wasBaseline = sHasConfigBaseline;
         sHasConfigBaseline = true;
         sLastSeedHash = sRunConfig.seedHash;
         sLastRandoFlags = sRunConfig.randomizerFlags;
         sLastNuzFlags = sRunConfig.nuzlockeFlags;
         sLastSoulLinkMode = sRunConfig.soulLinkMode;
         MpRandomizer_OnRunConfigChanged(&sRunConfig);
+        if (wasBaseline && MpNet_IsHost()) {
+            MpNet_SendBinary(MP_CH_CONTROL, MP_PEER_BROADCAST, MP_PKT_CTRL_RUN_CONFIG, &sRunConfig, sizeof(sRunConfig));
+        }
     }
 }
 

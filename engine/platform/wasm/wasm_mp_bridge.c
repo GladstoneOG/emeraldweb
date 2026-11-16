@@ -86,6 +86,15 @@ __attribute__((weak)) void MpSoulLink_KillByUid(uint32_t otId, uint32_t personal
     (void)personality;
 }
 
+__attribute__((weak)) void MpBattle2v2_ResolveBusyPrompt(int choice)
+{
+    (void)choice;
+}
+
+void WasmMp_PromptTeammateBusy(int partnerSlot, const char *reason);
+void WasmMp_NotifyBusyPromptResolved(void);
+WASM_KEEPALIVE void mp_resolve_busy_trainer_prompt(int choice);
+
 void WasmMp_Init(void)
 {
     sRxHead = 0;
@@ -157,6 +166,29 @@ EM_JS(void, js_mp_notify_teammate_busy, (int partnerSlot, const char *reasonPtr)
         window.PokemonNet.onTeammateBusyFallback(partnerSlot, reason || "busy");
     }
 });
+
+EM_JS(void, js_mp_prompt_teammate_busy, (int partnerSlot, const char *reasonPtr), {
+    var reason = (reasonPtr && typeof UTF8ToString === "function") ? UTF8ToString(reasonPtr) : "busy";
+    if (typeof window !== "undefined" && window.PokemonNet &&
+        typeof window.PokemonNet.onTeammateBusyPrompt === "function") {
+        window.PokemonNet.onTeammateBusyPrompt(partnerSlot, reason || "busy");
+    } else if (typeof window !== "undefined" && window.PokemonWasmBridge &&
+        typeof window.PokemonWasmBridge.onTeammateBusyPrompt === "function") {
+        window.PokemonWasmBridge.onTeammateBusyPrompt(partnerSlot, reason || "busy");
+    } else if (typeof Module !== "undefined" && typeof Module._mp_resolve_busy_trainer_prompt === "function") {
+        Module._mp_resolve_busy_trainer_prompt(1);
+    }
+});
+
+EM_JS(void, js_mp_notify_busy_prompt_resolved, (void), {
+    if (typeof window !== "undefined" && window.PokemonNet &&
+        typeof window.PokemonNet.onTeammateBusyResolved === "function") {
+        window.PokemonNet.onTeammateBusyResolved();
+    } else if (typeof window !== "undefined" && window.PokemonWasmBridge &&
+        typeof window.PokemonWasmBridge.onTeammateBusyResolved === "function") {
+        window.PokemonWasmBridge.onTeammateBusyResolved();
+    }
+});
 #endif
 
 void WasmMp_NotifyReady(void)
@@ -173,6 +205,23 @@ void WasmMp_NotifyTeammateBusy(int partnerSlot, const char *reason)
 #else
     (void)partnerSlot;
     (void)reason;
+#endif
+}
+
+void WasmMp_PromptTeammateBusy(int partnerSlot, const char *reason)
+{
+#ifdef __EMSCRIPTEN__
+    js_mp_prompt_teammate_busy(partnerSlot, (reason != NULL && reason[0] != '\0') ? reason : "busy");
+#else
+    (void)partnerSlot;
+    (void)reason;
+#endif
+}
+
+void WasmMp_NotifyBusyPromptResolved(void)
+{
+#ifdef __EMSCRIPTEN__
+    js_mp_notify_busy_prompt_resolved();
 #endif
 }
 
@@ -393,6 +442,11 @@ WASM_KEEPALIVE void mp_reset_new_game(int mode)
 WASM_KEEPALIVE int mp_save_game_now(void)
 {
     return MpOverworld_SaveGameNow() ? 1 : 0;
+}
+
+WASM_KEEPALIVE void mp_resolve_busy_trainer_prompt(int choice)
+{
+    MpBattle2v2_ResolveBusyPrompt(choice);
 }
 
 #ifdef WASM_SMOKE_TEST

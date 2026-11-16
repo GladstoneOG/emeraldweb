@@ -69,6 +69,22 @@ EM_JS(void, js_mp_on_flash_saved, (void), {
         window.PokemonWasmBridge._onFlashSavedInWasm();
     }
 });
+
+EM_JS(void, js_mp_clear_raw_flash_only, (void), {
+    try {
+        localStorage.removeItem("pokemon_web_flash_save_v1");
+    } catch (_) {}
+});
+
+EM_JS(void, js_mp_on_resume_fallback, (int saveStatus), {
+    if (typeof window !== "undefined" && window.PokemonWasmBridge) {
+        if (typeof window.PokemonWasmBridge._onResumeFallback === "function") {
+            window.PokemonWasmBridge._onResumeFallback(saveStatus);
+        } else if (saveStatus !== 0 && typeof console !== "undefined" && console.warn) {
+            console.warn("[WASM] Flash resume fallback status=" + saveStatus);
+        }
+    }
+});
 #endif
 
 #include <stdio.h>
@@ -78,6 +94,13 @@ EM_JS(void, js_mp_on_flash_saved, (void), {
 /* Distinct localIds (225..228 followers, 230..233 players) safely clear of map NPCs, Berry Blender (236..240), OWE (249..252), Player (255). */
 #define MP_REMOTE_FOLLOWER_LOCALID_BASE 225u
 #define MP_REMOTE_LOCALID_BASE          230u
+#define MP_WAYPOINT_QUEUE_CAP           32u
+
+typedef struct MpWaypointQueue {
+    MpOverworldPosPayload items[MP_WAYPOINT_QUEUE_CAP];
+    uint8_t head;
+    uint8_t count;
+} MpWaypointQueue;
 
 static uint32_t sOwTick = 0;
 static uint32_t sLastBroadcastTick = 0;
@@ -107,6 +130,7 @@ static uint8_t sRemoteFollowerStuckTicks[MP_MAX_PLAYERS];
 static s16 sRemoteFollowerLastX[MP_MAX_PLAYERS];
 static s16 sRemoteFollowerLastY[MP_MAX_PLAYERS];
 static uint8_t sRemoteFollowerBobTicks[MP_MAX_PLAYERS];
+static MpWaypointQueue sWaypointQueues[MP_MAX_PLAYERS];
 
 static bool sHasAutoSaveBaseline = false;
 static int8_t sLastAutoSaveGroup = -1;
@@ -265,6 +289,54 @@ static void DespawnRemoteFollowerSlot(uint8_t slot)
     sRemoteFollowerBobTicks[slot] = 0;
 }
 
+static void ClearPeerWaypointQueue(uint8_t slot)
+{
+    if (slot < MP_MAX_PLAYERS)
+        memset(&sWaypointQueues[slot], 0, sizeof(sWaypointQueues[slot]));
+}
+
+static const MpOverworldPosPayload *PeekPeerWaypoint(uint8_t slot)
+{
+    if (slot >= MP_MAX_PLAYERS || sWaypointQueues[slot].count == 0)
+        return NULL;
+    return &sWaypointQueues[slot].items[sWaypointQueues[slot].head];
+}
+
+static void PopPeerWaypoint(uint8_t slot)
+{
+    if (slot >= MP_MAX_PLAYERS)
+        return;
+    MpWaypointQueue *q = &sWaypointQueues[slot];
+    if (q->count == 0)
+        return;
+    q->head = (uint8_t)((q->head + 1u) % MP_WAYPOINT_QUEUE_CAP);
+    q->count--;
+}
+
+static void PushPeerWaypoint(uint8_t slot, const MpOverworldPosPayload *pkt)
+{
+    if (slot >= MP_MAX_PLAYERS || pkt == NULL)
+        return;
+    MpWaypointQueue *q = &sWaypointQueues[slot];
+    if (q->count > 0) {
+        uint8_t lastIdx = (uint8_t)((q->head + q->count - 1u) % MP_WAYPOINT_QUEUE_CAP);
+        MpOverworldPosPayload *last = &q->items[lastIdx];
+        if (last->mapGroup != pkt->mapGroup || last->mapNum != pkt->mapNum) {
+            ClearPeerWaypointQueue(slot);
+        } else if (last->x == pkt->x && last->y == pkt->y &&
+                   last->followerX == pkt->followerX && last->followerY == pkt->followerY) {
+            *last = *pkt;
+            return;
+        }
+    }
+    if (q->count >= MP_WAYPOINT_QUEUE_CAP) {
+        PopPeerWaypoint(slot);
+    }
+    uint8_t tailIdx = (uint8_t)((q->head + q->count) % MP_WAYPOINT_QUEUE_CAP);
+    q->items[tailIdx] = *pkt;
+    q->count++;
+}
+
 static void DespawnRemoteSlot(uint8_t slot)
 {
     if (slot >= MP_MAX_PLAYERS)
@@ -283,6 +355,7 @@ static void DespawnRemoteSlot(uint8_t slot)
     sRemotePlayerStuckTicks[slot] = 0;
     sRemotePlayerLastX[slot] = -1;
     sRemotePlayerLastY[slot] = -1;
+    ClearPeerWaypointQueue(slot);
 }
 
 static void SyncRemoteSprites(void)
@@ -316,24 +389,21 @@ static void SyncRemoteSprites(void)
             DespawnRemoteSlot(slot);
         }
 
-        s16 mapShiftX = (s16)(resolvedX - peer->pos.x);
-        s16 mapShiftY = (s16)(resolvedY - peer->pos.y);
         uint8_t localId = (uint8_t)(MP_REMOTE_LOCALID_BASE + slot);
-        s16 shiftedX = (s16)(resolvedX + MAP_OFFSET);
-        s16 shiftedY = (s16)(resolvedY + MAP_OFFSET);
-        uint16_t gfxId = SanitizeRemoteGfx(peer->pos.graphicsId, peer->pos.gender, peer->pos.movementState);
-        enum Direction facing = SanitizeFacing(peer->pos.facing);
+        s16 spawnShiftedX = (s16)(resolvedX + MAP_OFFSET);
+        s16 spawnShiftedY = (s16)(resolvedY + MAP_OFFSET);
+        uint16_t spawnGfxId = SanitizeRemoteGfx(peer->pos.graphicsId, peer->pos.gender, peer->pos.movementState);
 
         u8 objId = OBJECT_EVENTS_COUNT;
         bool spawnedNow = false;
         if (TryGetObjectEventIdByLocalIdAndMap(localId, (u8)localNum, (u8)localGroup, &objId) != FALSE ||
             objId >= OBJECT_EVENTS_COUNT) {
             objId = SpawnSpecialObjectEventParameterized(
-                gfxId,
+                spawnGfxId,
                 MOVEMENT_TYPE_NONE,
                 localId,
-                shiftedX,
-                shiftedY,
+                spawnShiftedX,
+                spawnShiftedY,
                 peer->pos.elevation);
             if (objId >= OBJECT_EVENTS_COUNT)
                 continue;
@@ -342,13 +412,55 @@ static void SyncRemoteSprites(void)
             sSpawnedNum[slot] = localNum;
             sRemoteSurfBlobSpriteId[slot] = MAX_SPRITES;
             sRemotePlayerStuckTicks[slot] = 0;
-            sRemotePlayerLastX[slot] = shiftedX;
-            sRemotePlayerLastY[slot] = shiftedY;
+            sRemotePlayerLastX[slot] = spawnShiftedX;
+            sRemotePlayerLastY[slot] = spawnShiftedY;
+            ClearPeerWaypointQueue(slot);
             spawnedNow = true;
         }
 
         struct ObjectEvent *obj = &gObjectEvents[objId];
         ObjectEventClearHeldMovementIfFinished(obj);
+
+        MpWaypointQueue *q = &sWaypointQueues[slot];
+        if (!spawnedNow) {
+            while (q->count > 0) {
+                const MpOverworldPosPayload *front = PeekPeerWaypoint(slot);
+                s16 wx = 0;
+                s16 wy = 0;
+                if (!ResolvePeerCoordsOnLocalMap(peer, localGroup, localNum, front->x, front->y, &wx, &wy)) {
+                    PopPeerWaypoint(slot);
+                    continue;
+                }
+                s16 wShiftedX = (s16)(wx + MAP_OFFSET);
+                s16 wShiftedY = (s16)(wy + MAP_OFFSET);
+                if (obj->currentCoords.x == wShiftedX && obj->currentCoords.y == wShiftedY &&
+                    !ObjectEventIsHeldMovementActive(obj) && !obj->singleMovementActive) {
+                    PopPeerWaypoint(slot);
+                } else {
+                    break;
+                }
+            }
+        }
+
+        const MpOverworldPosPayload *wp = (q->count > 0) ? PeekPeerWaypoint(slot) : &peer->pos;
+        s16 wpResolvedX = resolvedX;
+        s16 wpResolvedY = resolvedY;
+        if (wp != &peer->pos) {
+            if (!ResolvePeerCoordsOnLocalMap(peer, localGroup, localNum, wp->x, wp->y, &wpResolvedX, &wpResolvedY)) {
+                ClearPeerWaypointQueue(slot);
+                wp = &peer->pos;
+                wpResolvedX = resolvedX;
+                wpResolvedY = resolvedY;
+            }
+        }
+
+        uint8_t queued = q->count;
+        s16 mapShiftX = (s16)(wpResolvedX - wp->x);
+        s16 mapShiftY = (s16)(wpResolvedY - wp->y);
+        s16 shiftedX = (s16)(wpResolvedX + MAP_OFFSET);
+        s16 shiftedY = (s16)(wpResolvedY + MAP_OFFSET);
+        uint16_t gfxId = SanitizeRemoteGfx(wp->graphicsId, wp->gender, wp->movementState);
+        enum Direction facing = SanitizeFacing(wp->facing);
 
         bool gfxChanged = (obj->graphicsId != gfxId);
         if (gfxChanged) {
@@ -361,8 +473,8 @@ static void SyncRemoteSprites(void)
         }
 
         if (!ObjectEventIsHeldMovementActive(obj) && !obj->singleMovementActive) {
-            obj->currentElevation = peer->pos.elevation;
-            obj->previousElevation = peer->pos.elevation;
+            obj->currentElevation = wp->elevation;
+            obj->previousElevation = wp->elevation;
         }
 
         s16 dx = (s16)(shiftedX - obj->currentCoords.x);
@@ -375,7 +487,7 @@ static void SyncRemoteSprites(void)
         if (!spawnedNow && dist >= 1) {
             if (obj->currentCoords.x == sRemotePlayerLastX[slot] &&
                 obj->currentCoords.y == sRemotePlayerLastY[slot]) {
-                if (++sRemotePlayerStuckTicks[slot] > 18u)
+                if (++sRemotePlayerStuckTicks[slot] > 24u)
                     playerStuck = true;
             } else {
                 sRemotePlayerLastX[slot] = obj->currentCoords.x;
@@ -388,7 +500,8 @@ static void SyncRemoteSprites(void)
             sRemotePlayerStuckTicks[slot] = 0;
         }
 
-        if (spawnedNow || dist > 4 || playerStuck || (dist >= 1 && peer->pos.inBattle != 0)) {
+        bool playerInBattle = (wp->inBattle & MP_OW_STATUS_IN_BATTLE) != 0;
+        if (spawnedNow || dist > 14 || playerStuck || (dist >= 1 && playerInBattle)) {
             ClearRemoteObjectMovement(obj);
             if (obj->spriteId < MAX_SPRITES)
                 MoveObjectEventToMapCoords(obj, shiftedX, shiftedY);
@@ -399,6 +512,10 @@ static void SyncRemoteSprites(void)
             sRemotePlayerLastY[slot] = obj->currentCoords.y;
             sRemotePlayerStuckTicks[slot] = 0;
             ObjectEventTurn(obj, facing);
+            if (spawnedNow || playerInBattle)
+                ClearPeerWaypointQueue(slot);
+            else if (q->count > 0)
+                PopPeerWaypoint(slot);
         } else if (dist >= 1) {
             obj->initialCoords = obj->currentCoords;
             if (!ObjectEventIsHeldMovementActive(obj) && !obj->singleMovementActive) {
@@ -415,11 +532,13 @@ static void SyncRemoteSprites(void)
                                         gfxId == OBJ_EVENT_GFX_RIVAL_BRENDAN_NORMAL ||
                                         gfxId == OBJ_EVENT_GFX_RIVAL_MAY_NORMAL);
                 u8 action;
-                if ((peer->pos.movementState & PLAYER_AVATAR_FLAG_MACH_BIKE) && dist >= 2)
+                if (((wp->movementState & PLAYER_AVATAR_FLAG_MACH_BIKE) && (dist >= 2 || queued >= 2)) ||
+                    queued >= 4 || dist >= 5)
                     action = GetWalkFasterMovementAction(stepDir);
-                else if ((peer->pos.movementState & PLAYER_AVATAR_FLAG_DASH) && isNormalFootGfx)
+                else if ((wp->movementState & PLAYER_AVATAR_FLAG_DASH) && isNormalFootGfx)
                     action = GetPlayerRunMovementAction(stepDir);
-                else if ((peer->pos.movementState & (PLAYER_AVATAR_FLAG_BIKE | PLAYER_AVATAR_FLAG_SURFING)) || dist >= 2)
+                else if ((wp->movementState & (PLAYER_AVATAR_FLAG_BIKE | PLAYER_AVATAR_FLAG_SURFING)) ||
+                         dist >= 2 || queued >= 2)
                     action = GetWalkFastMovementAction(stepDir);
                 else
                     action = GetWalkNormalMovementAction(stepDir);
@@ -444,7 +563,7 @@ static void SyncRemoteSprites(void)
             }
         }
 
-        if ((peer->pos.movementState & PLAYER_AVATAR_FLAG_SURFING) != 0) {
+        if ((wp->movementState & PLAYER_AVATAR_FLAG_SURFING) != 0) {
             if (sRemoteSurfBlobSpriteId[slot] >= MAX_SPRITES && obj->spriteId < MAX_SPRITES) {
                 gFieldEffectArguments[0] = obj->currentCoords.x;
                 gFieldEffectArguments[1] = obj->currentCoords.y;
@@ -452,7 +571,7 @@ static void SyncRemoteSprites(void)
                 u8 blobId = (u8)FieldEffectStart(FLDEFF_SURF_BLOB);
                 if (blobId < MAX_SPRITES) {
                     SetSurfBlob_BobState(blobId, BOB_PLAYER_AND_MON);
-                    gSprites[blobId].oam.paletteNum = LoadPlayerObjectEventPalette((peer->pos.gender == FEMALE) ? FEMALE : MALE);
+                    gSprites[blobId].oam.paletteNum = LoadPlayerObjectEventPalette((wp->gender == FEMALE) ? FEMALE : MALE);
                     sRemoteSurfBlobSpriteId[slot] = blobId;
                 }
             }
@@ -464,23 +583,23 @@ static void SyncRemoteSprites(void)
         }
 
         /* Synchronize peer's Following Pokémon sprite, movement, walk-in-place idle, and bobbing */
-        if ((peer->pos.followerGfxId & OBJ_EVENT_MON) == 0 ||
-            SanitizeSpeciesId(peer->pos.followerGfxId & OBJ_EVENT_MON_SPECIES_MASK) == SPECIES_NONE) {
+        if ((wp->followerGfxId & OBJ_EVENT_MON) == 0 ||
+            SanitizeSpeciesId(wp->followerGfxId & OBJ_EVENT_MON_SPECIES_MASK) == SPECIES_NONE) {
             DespawnRemoteFollowerSlot(slot);
             continue;
         }
 
         uint8_t fLocalId = (uint8_t)(MP_REMOTE_FOLLOWER_LOCALID_BASE + slot);
-        s16 fTargetX = (s16)(peer->pos.followerX + mapShiftX + MAP_OFFSET);
-        s16 fTargetY = (s16)(peer->pos.followerY + mapShiftY + MAP_OFFSET);
+        s16 fTargetX = (s16)(wp->followerX + mapShiftX + MAP_OFFSET);
+        s16 fTargetY = (s16)(wp->followerY + mapShiftY + MAP_OFFSET);
         if (fTargetX < 0 || fTargetY < 0 ||
             fTargetX >= gBackupMapLayout.width || fTargetY >= gBackupMapLayout.height) {
             DespawnRemoteFollowerSlot(slot);
             continue;
         }
-        enum Direction fDir = SanitizeFacing(peer->pos.followerFacing);
-        uint16_t fGfxId = peer->pos.followerGfxId;
-        uint8_t fElev = peer->pos.followerElevation;
+        enum Direction fDir = SanitizeFacing(wp->followerFacing);
+        uint16_t fGfxId = wp->followerGfxId;
+        uint8_t fElev = wp->followerElevation;
 
         u8 fObjId = OBJECT_EVENTS_COUNT;
         bool fSpawnedNow = false;
@@ -539,7 +658,7 @@ static void SyncRemoteSprites(void)
         if (!fSpawnedNow && fDist >= 1) {
             if (fObj->currentCoords.x == sRemoteFollowerLastX[slot] &&
                 fObj->currentCoords.y == sRemoteFollowerLastY[slot]) {
-                if (++sRemoteFollowerStuckTicks[slot] > 16u)
+                if (++sRemoteFollowerStuckTicks[slot] > 20u)
                     followerStuck = true;
             } else {
                 sRemoteFollowerLastX[slot] = fObj->currentCoords.x;
@@ -552,7 +671,7 @@ static void SyncRemoteSprites(void)
             sRemoteFollowerStuckTicks[slot] = 0;
         }
 
-        if (fSpawnedNow || fDist > 4 || followerStuck || (fDist >= 1 && peer->pos.inBattle != 0)) {
+        if (fSpawnedNow || fDist > 14 || followerStuck || (fDist >= 1 && playerInBattle)) {
             ClearRemoteObjectMovement(fObj);
             if (fObj->spriteId < MAX_SPRITES)
                 MoveObjectEventToMapCoords(fObj, fTargetX, fTargetY);
@@ -573,13 +692,15 @@ static void SyncRemoteSprites(void)
                 else
                     fStepDir = (fDy > 0) ? DIR_SOUTH : DIR_NORTH;
 
-                if ((peer->pos.followerFlags & MP_FOLLOWER_F_JUMPING) && fDist == 2 && (fDx == 0 || fDy == 0))
+                if ((wp->followerFlags & MP_FOLLOWER_F_JUMPING) && fDist == 2 && (fDx == 0 || fDy == 0))
                     fAction = GetJump2MovementAction(fStepDir);
-                else if ((peer->pos.followerFlags & MP_FOLLOWER_F_JUMPING) && fDist == 1)
+                else if ((wp->followerFlags & MP_FOLLOWER_F_JUMPING) && fDist == 1)
                     fAction = GetJumpMovementAction(fStepDir);
-                else if ((peer->pos.movementState & PLAYER_AVATAR_FLAG_MACH_BIKE) && fDist >= 2)
+                else if (((wp->movementState & PLAYER_AVATAR_FLAG_MACH_BIKE) && (fDist >= 2 || queued >= 2)) ||
+                         queued >= 4 || fDist >= 5)
                     fAction = GetWalkFasterMovementAction(fStepDir);
-                else if (fDist >= 2 || (peer->pos.followerFlags & MP_FOLLOWER_F_FAST) || (peer->pos.movementState & PLAYER_AVATAR_FLAG_DASH))
+                else if (fDist >= 2 || queued >= 2 || (wp->followerFlags & MP_FOLLOWER_F_FAST) ||
+                         (wp->movementState & PLAYER_AVATAR_FLAG_DASH))
                     fAction = GetWalkFastMovementAction(fStepDir);
                 else
                     fAction = GetWalkNormalMovementAction(fStepDir);
@@ -603,12 +724,12 @@ static void SyncRemoteSprites(void)
                  (fActNow >= MOVEMENT_ACTION_JUMP_SPECIAL_DOWN && fActNow <= MOVEMENT_ACTION_JUMP_SPECIAL_RIGHT) ||
                  (fActNow >= MOVEMENT_ACTION_JUMP_DOWN && fActNow <= MOVEMENT_ACTION_JUMP_RIGHT));
             sRemoteFollowerBobTicks[slot]++;
-            if (!localJumpNow && (peer->pos.followerFlags & MP_FOLLOWER_F_JUMPING) == 0) {
+            if (!localJumpNow && (wp->followerFlags & MP_FOLLOWER_F_JUMPING) == 0) {
                 if (OW_FOLLOWERS_BOBBING == TRUE && (sRemoteFollowerBobTicks[slot] & 7u) == 2u) {
                     fSp->y2 ^= -1;
                 }
             }
-            if (peer->pos.inBattle != 0)
+            if ((peer->pos.inBattle & MP_OW_STATUS_IN_BATTLE) != 0)
                 fSp->invisible = ((sOwTick & 4u) != 0u);
             else
                 fSp->invisible = FALSE;
@@ -627,6 +748,7 @@ void MpOverworld_Init(void)
     memset(sSpawnedActive, 0, sizeof(sSpawnedActive));
     memset(sSpawnedGroup, 0, sizeof(sSpawnedGroup));
     memset(sSpawnedNum, 0, sizeof(sSpawnedNum));
+    memset(sWaypointQueues, 0, sizeof(sWaypointQueues));
     for (uint8_t i = 0; i < MP_MAX_PLAYERS; i++) {
         sRemoteSurfBlobSpriteId[i] = MAX_SPRITES;
         sRemotePlayerStuckTicks[i] = 0;
@@ -764,6 +886,18 @@ bool MpOverworld_IsPeerBusyForBattle(uint8_t slot)
     return MpOverworld_GetPeerBusyReason(slot) != NULL;
 }
 
+void MpOverworld_NotifyFlashSaved(void)
+{
+    if (gSaveBlock1Ptr) {
+        sHasAutoSaveBaseline = true;
+        sLastAutoSaveGroup = gSaveBlock1Ptr->location.mapGroup;
+        sLastAutoSaveNum = gSaveBlock1Ptr->location.mapNum;
+    }
+#ifdef __EMSCRIPTEN__
+    js_mp_on_flash_saved();
+#endif
+}
+
 bool MpOverworld_SaveGameNow(void)
 {
     if (!gSaveBlock1Ptr || !gSaveBlock2Ptr)
@@ -796,12 +930,7 @@ bool MpOverworld_SaveGameNow(void)
 
     if (status == SAVE_STATUS_OK) {
         gDifferentSaveFile = FALSE;
-        sHasAutoSaveBaseline = true;
-        sLastAutoSaveGroup = mapGroup;
-        sLastAutoSaveNum = mapNum;
-#ifdef __EMSCRIPTEN__
-        js_mp_on_flash_saved();
-#endif
+        MpOverworld_NotifyFlashSaved();
         return true;
     }
     return false;
@@ -901,17 +1030,27 @@ void MpOverworld_ResumeOrBootstrapFromSave(void)
     ResetGraphicsAndSaveBlocks();
     LoadGameSave(SAVE_NORMAL);
 
-    if (gSaveFileStatus == SAVE_STATUS_OK) {
+    if (gSaveFileStatus == SAVE_STATUS_OK || gSaveFileStatus == SAVE_STATUS_ERROR) {
         EnsureValidLastHealLocation();
         SetPokemonCryStereo(gSaveBlock2Ptr->optionsSound);
         sHasAutoSaveBaseline = true;
         sLastAutoSaveGroup = gSaveBlock1Ptr->location.mapGroup;
         sLastAutoSaveNum = gSaveBlock1Ptr->location.mapNum;
+        if (gSaveFileStatus == SAVE_STATUS_ERROR)
+            sPendingAutoSaveDelay = 30;
         SetMainCallback2(CB2_ContinueSavedGame);
         return;
     }
 
+#ifdef __EMSCRIPTEN__
+    js_mp_on_resume_fallback((int)gSaveFileStatus);
+#endif
     BootstrapFreshGameToLittleroot();
+    /* Never auto-save blank Littleroot over Flash immediately on fallback before player progresses. */
+    sHasAutoSaveBaseline = true;
+    sLastAutoSaveGroup = MAP_GROUP(MAP_LITTLEROOT_TOWN);
+    sLastAutoSaveNum = MAP_NUM(MAP_LITTLEROOT_TOWN);
+    sPendingAutoSaveDelay = 0;
 }
 
 void MpOverworld_ResetToNewGame(bool skipIntro)
@@ -937,7 +1076,11 @@ void MpOverworld_ResetToNewGame(bool skipIntro)
     MpSoulLink_ResetRun();
 
 #ifdef WASM_PLATFORM
-    WasmFlash_ClearStorage();
+    WasmFlash_Init();
+#ifdef __EMSCRIPTEN__
+    /* Clear only raw Flash bytes; JS manages flashSaveMeta (runId/savedAtMs) explicitly. */
+    js_mp_clear_raw_flash_only();
+#endif
 #endif
 
     ResetGraphicsAndSaveBlocks();
@@ -1586,6 +1729,7 @@ void MpOverworld_HandlePacket(uint16_t fromPeerId, uint8_t opcode, const void *p
                     peer->peerId = fromPeerId;
                 peer->hasPosition = true;
                 peer->pos = pkt;
+                PushPeerWaypoint(pkt.slotIndex, &pkt);
                 if (!MpNet_HasAuthoritativePairTag(pkt.slotIndex))
                     peer->partyPairTag = pkt.partyTag;
             }
@@ -1598,6 +1742,7 @@ void MpOverworld_HandlePacket(uint16_t fromPeerId, uint8_t opcode, const void *p
                 peer->connected = false;
                 peer->hasPosition = false;
             }
+            ClearPeerWaypointQueue(slot);
             DespawnRemoteSlot(slot);
         }
     }

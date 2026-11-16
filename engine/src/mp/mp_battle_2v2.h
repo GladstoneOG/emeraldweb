@@ -46,6 +46,9 @@ bool MpBattle2v2_WasLastBattleFriendlyPvP(void);
 bool MpBattle2v2_WasLastBattleBridgeSynced(void);
 uint16_t MpBattle2v2_GetSyncedTrainerId(void);
 bool MpBattle2v2_ReadyForBattleStart(void);
+bool MpBattle2v2_WaitForBusyTrainerPrompt(void);
+void MpBattle2v2_ResolveBusyPrompt(int choice);
+void MpBattle2v2_VerifySyncedSeedBeforeTrainerBuild(void);
 uint8_t MpBattle2v2_GetRemotePartnerGender(void);
 uint32_t MpBattle2v2_GetBattleSeed(void);
 bool MpBattle2v2_IsInitiator(void);
@@ -77,6 +80,11 @@ void BattleSetup_LaunchMpSyncedBattle(void);
 /* Required callbacks invoked by mp_net.c */
 void MpBattle2v2_HandlePacket(uint16_t fromPeerId, uint8_t opcode, const void *payload, uint16_t len);
 void MpBattle2v2_StartSyncedFromBridge(uint32_t battleSeed, uint8_t mode, uint8_t partnerSlot, uint16_t partnerPeerId);
+
+#ifdef WASM_PLATFORM
+void WasmMp_PromptTeammateBusy(int partnerSlot, const char *reason);
+void WasmMp_NotifyBusyPromptResolved(void);
+#endif
 
 #ifdef __cplusplus
 }

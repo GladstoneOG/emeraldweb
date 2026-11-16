@@ -11,6 +11,7 @@
 #include "constants/moves.h"
 #include "constants/pokemon.h"
 #include "constants/species.h"
+#include "constants/opponents.h"
 #include "constants/trainers.h"
 #include "mp_randomizer.h"
 #include "mp_world_sync.h"
@@ -451,12 +452,14 @@ uint16_t MpRandomizer_GetWildSpecies(uint8_t mapGroup, uint8_t mapNum, uint8_t a
     uint32_t entityId;
     uint64_t r;
 
+    (void)slot;
     if (!MpRandomizer_HasFlag(MP_RANDO_F_WILD_ENCOUNTERS))
         return origSpecies;
     if (origSpecies == SPECIES_NONE || origSpecies >= NUM_SPECIES)
         return origSpecies;
 
-    entityId = ((uint32_t)mapGroup << 24) | ((uint32_t)mapNum << 16) | ((uint32_t)area << 8) | (uint32_t)slot;
+    /* 1:1 per-species mapping on each route/area regardless of local gRngValue slot roll. */
+    entityId = ((uint32_t)mapGroup << 24) | ((uint32_t)mapNum << 16) | ((uint32_t)area << 8);
     entityId ^= ((uint32_t)origSpecies * 2654435761u);
     r = MpRand_SplitMix64(MpRandomizer_GetRunSeed(), MP_RANDO_SALT_WILD, entityId);
     return PickSpeciesWithConstraints(r, origSpecies, MpRandomizer_HasFlag(MP_RANDO_F_SIMILAR_BST), false, TYPE_NONE);
@@ -517,33 +520,121 @@ uint16_t MpRandomizer_GetStaticSpecies(uint32_t entityId, uint16_t origSpecies)
     return PickSpeciesWithConstraints(r, origSpecies, MpRandomizer_HasFlag(MP_RANDO_F_SIMILAR_BST), allowLegend, TYPE_NONE);
 }
 
+static uint16_t NormalizeRivalTrainerId(uint16_t trainerId, bool *outIsRival)
+{
+    bool isRival = true;
+    uint16_t norm = trainerId;
+
+    switch (trainerId)
+    {
+    case TRAINER_MAY_ROUTE_103_MUDKIP:
+    case TRAINER_BRENDAN_ROUTE_103_MUDKIP:
+        norm = TRAINER_BRENDAN_ROUTE_103_MUDKIP;
+        break;
+    case TRAINER_MAY_ROUTE_110_MUDKIP:
+    case TRAINER_BRENDAN_ROUTE_110_MUDKIP:
+        norm = TRAINER_BRENDAN_ROUTE_110_MUDKIP;
+        break;
+    case TRAINER_MAY_ROUTE_119_MUDKIP:
+    case TRAINER_BRENDAN_ROUTE_119_MUDKIP:
+        norm = TRAINER_BRENDAN_ROUTE_119_MUDKIP;
+        break;
+    case TRAINER_MAY_ROUTE_103_TREECKO:
+    case TRAINER_BRENDAN_ROUTE_103_TREECKO:
+        norm = TRAINER_BRENDAN_ROUTE_103_TREECKO;
+        break;
+    case TRAINER_MAY_ROUTE_110_TREECKO:
+    case TRAINER_BRENDAN_ROUTE_110_TREECKO:
+        norm = TRAINER_BRENDAN_ROUTE_110_TREECKO;
+        break;
+    case TRAINER_MAY_ROUTE_119_TREECKO:
+    case TRAINER_BRENDAN_ROUTE_119_TREECKO:
+        norm = TRAINER_BRENDAN_ROUTE_119_TREECKO;
+        break;
+    case TRAINER_MAY_ROUTE_103_TORCHIC:
+    case TRAINER_BRENDAN_ROUTE_103_TORCHIC:
+        norm = TRAINER_BRENDAN_ROUTE_103_TORCHIC;
+        break;
+    case TRAINER_MAY_ROUTE_110_TORCHIC:
+    case TRAINER_BRENDAN_ROUTE_110_TORCHIC:
+        norm = TRAINER_BRENDAN_ROUTE_110_TORCHIC;
+        break;
+    case TRAINER_MAY_ROUTE_119_TORCHIC:
+    case TRAINER_BRENDAN_ROUTE_119_TORCHIC:
+        norm = TRAINER_BRENDAN_ROUTE_119_TORCHIC;
+        break;
+    case TRAINER_MAY_RUSTBORO_TREECKO:
+    case TRAINER_BRENDAN_RUSTBORO_TREECKO:
+        norm = TRAINER_BRENDAN_RUSTBORO_TREECKO;
+        break;
+    case TRAINER_MAY_RUSTBORO_MUDKIP:
+    case TRAINER_BRENDAN_RUSTBORO_MUDKIP:
+        norm = TRAINER_BRENDAN_RUSTBORO_MUDKIP;
+        break;
+    case TRAINER_MAY_RUSTBORO_TORCHIC:
+    case TRAINER_BRENDAN_RUSTBORO_TORCHIC:
+        norm = TRAINER_BRENDAN_RUSTBORO_TORCHIC;
+        break;
+    case TRAINER_MAY_LILYCOVE_MUDKIP:
+    case TRAINER_BRENDAN_LILYCOVE_MUDKIP:
+        norm = TRAINER_BRENDAN_LILYCOVE_MUDKIP;
+        break;
+    case TRAINER_MAY_LILYCOVE_TREECKO:
+    case TRAINER_BRENDAN_LILYCOVE_TREECKO:
+        norm = TRAINER_BRENDAN_LILYCOVE_TREECKO;
+        break;
+    case TRAINER_MAY_LILYCOVE_TORCHIC:
+    case TRAINER_BRENDAN_LILYCOVE_TORCHIC:
+        norm = TRAINER_BRENDAN_LILYCOVE_TORCHIC;
+        break;
+    case TRAINER_MAY_PLACEHOLDER:
+    case TRAINER_BRENDAN_PLACEHOLDER:
+        norm = TRAINER_BRENDAN_PLACEHOLDER;
+        break;
+    default:
+        isRival = false;
+        break;
+    }
+
+    if (outIsRival != NULL)
+        *outIsRival = isRival;
+    return norm;
+}
+
 uint16_t MpRandomizer_GetTrainerSpecies(uint16_t trainerId, uint8_t monSlot, uint8_t trainerClass, uint16_t origSpecies)
 {
     uint32_t entityId;
     uint64_t r;
     uint8_t themeType = TYPE_NONE;
+    bool isRival = false;
+    uint16_t normTrainerId;
+    uint8_t effectiveSlot;
 
     if (!MpRandomizer_HasFlag(MP_RANDO_F_TRAINERS_2V2))
         return origSpecies;
     if (origSpecies == SPECIES_NONE || origSpecies >= NUM_SPECIES)
         return origSpecies;
 
-    if (MpRandomizer_HasFlag(MP_RANDO_F_PRESERVE_GYM_THEMES) && IsBossTrainerClass(trainerClass))
-        themeType = GetDeterministicTrainerThemeType(trainerId);
+    normTrainerId = NormalizeRivalTrainerId(trainerId, &isRival);
+    effectiveSlot = isRival ? 0u : monSlot;
 
-    entityId = ((uint32_t)trainerId << 16) | ((uint32_t)monSlot << 8) | (uint32_t)origSpecies;
+    if (MpRandomizer_HasFlag(MP_RANDO_F_PRESERVE_GYM_THEMES) && IsBossTrainerClass(trainerClass))
+        themeType = GetDeterministicTrainerThemeType(normTrainerId);
+
+    entityId = ((uint32_t)normTrainerId << 16) | ((uint32_t)effectiveSlot << 8) | (uint32_t)origSpecies;
     r = MpRand_SplitMix64(MpRandomizer_GetRunSeed(), MP_RANDO_SALT_TRAINER, entityId);
     return PickSpeciesWithConstraints(r, origSpecies, MpRandomizer_HasFlag(MP_RANDO_F_SIMILAR_BST), false, themeType);
 }
 
 uint16_t MpRandomizer_GetNpcPartnerSpecies(uint16_t trainerId, uint8_t trainerClass, uint16_t aceSpecies, uint8_t aceLevel)
 {
-    uint32_t entityId = ((uint32_t)trainerId << 16) | ((uint32_t)aceSpecies << 4) | (uint32_t)aceLevel;
+    uint16_t normTrainerId = NormalizeRivalTrainerId(trainerId, NULL);
+    uint32_t entityId = ((uint32_t)normTrainerId << 16) | ((uint32_t)aceSpecies << 4) | (uint32_t)aceLevel;
     uint64_t r = MpRand_SplitMix64(MpRandomizer_GetRunSeed(), MP_RANDO_SALT_NPC_PARTNER, entityId);
     uint8_t themeType = TYPE_NONE;
 
     if (MpRandomizer_HasFlag(MP_RANDO_F_PRESERVE_GYM_THEMES) && IsBossTrainerClass(trainerClass))
-        themeType = GetDeterministicTrainerThemeType(trainerId);
+        themeType = GetDeterministicTrainerThemeType(normTrainerId);
 
     return PickSpeciesWithConstraints(r, aceSpecies, true, false, themeType);
 }

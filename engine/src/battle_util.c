@@ -7911,6 +7911,8 @@ static const u32 sGen2CriticalHitOdds[] = {17, 32, 64, 85, 128}; // X/256
 
 u32 GetCriticalHitOdds(u32 critChance)
 {
+    if (critChance >= ARRAY_COUNT(sCriticalHitOdds))
+        return sCriticalHitOdds[0];
     if (GetConfig(B_CRIT_CHANCE) >= GEN_7)
         return sGen7CriticalHitOdds[critChance];
     if (GetConfig(B_CRIT_CHANCE) == GEN_6)

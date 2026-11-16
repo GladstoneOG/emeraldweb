@@ -259,7 +259,7 @@ static void Task_BattleStart(u8 taskId)
     switch (tState)
     {
     case 0:
-        if (!FldEffPoison_IsActive()) // is poison not active?
+        if (!FldEffPoison_IsActive() && MpBattle2v2_WaitForBusyTrainerPrompt()) // is poison not active and no busy-partner wait pending?
         {
             BattleTransition_StartOnField(tTransition);
             ClearMirageTowerPulseBlendEffect();
@@ -312,7 +312,7 @@ static void Task_BattleStart_Debug(u8 taskId)
     switch (tState)
     {
     case 0:
-        if (!FldEffPoison_IsActive()) // is poison not active?
+        if (!FldEffPoison_IsActive() && MpBattle2v2_WaitForBusyTrainerPrompt()) // is poison not active and no busy-partner wait pending?
         {
             BattleTransition_StartOnField(tTransition);
             ClearMirageTowerPulseBlendEffect();
@@ -552,10 +552,16 @@ static void ApplyMpTrainerPartyHooks(struct Pokemon *party, u16 trainerId)
 
 static void BuildAndHookNpcTrainerParties(void)
 {
-    u32 battleSeed = MpBattle2v2_GetBattleSeed();
-    bool32 useSeed = (battleSeed != 0 || MpBattle2v2_IsSyncedSession());
-    rng_value_t savedRng = gRngValue;
-    rng_value_t savedRng2 = gRng2Value;
+    u32 battleSeed;
+    bool32 useSeed;
+    rng_value_t savedRng;
+    rng_value_t savedRng2;
+
+    MpBattle2v2_VerifySyncedSeedBeforeTrainerBuild();
+    battleSeed = MpBattle2v2_GetBattleSeed();
+    useSeed = (battleSeed != 0 || MpBattle2v2_IsSyncedSession());
+    savedRng = gRngValue;
+    savedRng2 = gRng2Value;
 
     if (useSeed)
     {

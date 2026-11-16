@@ -1239,30 +1239,29 @@ static void VerticalShakeTwice(struct Sprite *sprite)
     u8 var6 = sVerticalShakeData[sprite->data[5]][1];
     u8 amplitude = 0;
 
+    if (var5 == (u8)-1 || var6 == 0)
+    {
+        sprite->callback = WaitAnimEnd;
+        sprite->y2 = 0;
+        return;
+    }
+
     if (var5 != (u8)-2)
         amplitude = (var6 - var7) * var5 / var6;
     else
         amplitude = 0;
 
-    if (var5 == (u8)-1)
+    sprite->y2 = Sin(index, amplitude);
+
+    if (var7 == var6)
     {
-        sprite->callback = WaitAnimEnd;
-        sprite->y2 = 0;
+        sprite->data[5]++;
+        sprite->data[6] = 0;
     }
     else
     {
-        sprite->y2 = Sin(index, amplitude);
-
-        if (var7 == var6)
-        {
-            sprite->data[5]++;
-            sprite->data[6] = 0;
-        }
-        else
-        {
-            sprite->data[2] += sprite->data[0];
-            sprite->data[6]++;
-        }
+        sprite->data[2] += sprite->data[0];
+        sprite->data[6]++;
     }
 }
 
@@ -3670,29 +3669,29 @@ static void VerticalShakeLowTwice(struct Sprite *sprite)
 
     var6 = sVerticalShakeData[sprite->data[5]][1];
     var7 = 0;
+
+    if (var5 == (u8)-1 || var6 == 0)
+    {
+        sprite->callback = WaitAnimEnd;
+        sprite->y2 = 0;
+        return;
+    }
+
     if (sVerticalShakeData[sprite->data[5]][0] != (u8)-2)
         var7 = (var6 - var9) * var5 / var6;
     else
         var7 = 0;
 
-    if (var5 == (u8)-1)
+    sprite->y2 = Sin((var8 + 192) % 256, var7) + var7;
+    if (var9 == var6)
     {
-        sprite->callback = WaitAnimEnd;
-        sprite->y2 = 0;
+        sprite->data[5]++;
+        sprite->data[6] = 0;
     }
     else
     {
-        sprite->y2 = Sin((var8 + 192) % 256, var7) + var7;
-        if (var9 == var6)
-        {
-            sprite->data[5]++;
-            sprite->data[6] = 0;
-        }
-        else
-        {
-            sprite->data[2] += sprite->data[0];
-            sprite->data[6]++;
-        }
+        sprite->data[2] += sprite->data[0];
+        sprite->data[6]++;
     }
 }
 
