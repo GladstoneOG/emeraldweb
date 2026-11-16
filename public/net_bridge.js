@@ -407,15 +407,15 @@
   }
 
   function getOrCreatePlayerName() {
+    const net = typeof global !== "undefined" ? global.PokemonNet : null;
     if (
-      typeof client !== "undefined" &&
-      client &&
-      client.state &&
-      client.state.auth &&
-      client.state.auth.status === "signed_in" &&
-      client.state.auth.username
+      net &&
+      net.state &&
+      net.state.auth &&
+      net.state.auth.status === "signed_in" &&
+      net.state.auth.username
     ) {
-      const authName = String(client.state.auth.username).trim().slice(0, 20);
+      const authName = String(net.state.auth.username).trim().slice(0, 20);
       if (authName) {
         try {
           localStorage.setItem(STORAGE_KEYS.playerName, authName);
