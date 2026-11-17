@@ -2393,6 +2393,17 @@
       return null;
     }
 
+    _areExplicitlyPartied(slotA, slotB) {
+      return Boolean(
+        slotA &&
+          slotB &&
+          slotA.slotIndex !== slotB.slotIndex &&
+          typeof slotA.partyId === "string" &&
+          slotA.partyId.length > 0 &&
+          slotA.partyId === slotB.partyId
+      );
+    }
+
     _notifyHostGateRejection(requesterPeerId, action, reason) {
       const message = String(reason || "Action restricted during tutorial or Game Over.");
       this.addLog(message, "warn");
@@ -2852,6 +2863,17 @@
           const targetPeer = Number(msg.targetPeerId);
           if (msg.t === "battle_invite" || msg.t === "battle_accept") {
             const targetSlot = this.state.players.find((p) => p.peerId === targetPeer);
+            if (
+              msg.mode === "coop_2v2" &&
+              !this._areExplicitlyPartied(senderSlot, targetSlot)
+            ) {
+              this._notifyHostGateRejection(
+                fromPeerId,
+                "battle_invite",
+                "Co-op 2v2 battles require an explicit party with that player."
+              );
+              return;
+            }
             const gateReason = this._getHostSlotGateReason(senderSlot, targetSlot);
             if (gateReason) {
               this._notifyHostGateRejection(fromPeerId, "battle_invite", gateReason);
@@ -3950,7 +3972,7 @@
       const partner = Number.isInteger(idx) && idx >= 0 && idx < 4 ? this.state.players[idx] : null;
       const who = partner && partner.name ? partner.name : "Your teammate";
       const mapName = (partner && partner.mapName) || "";
-      const validReasons = ["busy", "different_map", "in_battle", "in_tutorial", "not_ready"];
+      const validReasons = ["busy", "different_map", "in_battle", "in_tutorial", "not_ready", "not_partied"];
       const reason = typeof reasonStr === "string" && validReasons.includes(reasonStr) ? reasonStr : "busy";
       let title = "Partner Busy";
       let desc = `${who} is busy in a cutscene or dialogue.`;
@@ -3966,6 +3988,9 @@
       } else if (reason === "not_ready") {
         title = "Partner Not Ready";
         desc = `${who} is not connected or not ready yet.`;
+      } else if (reason === "not_partied") {
+        title = "Party Required";
+        desc = `You must be in a party with ${who} to join a Co-op 2v2 battle.`;
       }
       return {
         targetSlotIndex: Number.isInteger(idx) && idx >= 0 && idx < 4 ? idx : -1,
@@ -4020,6 +4045,14 @@
       }
 
       const resolvedMode = mode || "coop_2v2";
+      if (resolvedMode === "coop_2v2" && !this._areExplicitlyPartied(me, target)) {
+        this.emit("toast", {
+          kind: "warn",
+          title: "Party Required",
+          message: `You must be in a party with ${target.name} to start a Co-op 2v2 battle.`,
+        });
+        return;
+      }
       const forceWait = Boolean(options && options.forceWait);
       if (!forceWait && (target.inBattle || target.busy)) {
         const busyReason = target.inBattle ? "in a battle" : "in a cutscene, NPC dialogue, or solo activity";
@@ -4098,6 +4131,15 @@
       if (idx === -1) return;
       const invite = this.state.activeInvites.splice(idx, 1)[0];
       const me = this.state.players[this.state.connection.mySlotIndex];
+      const inviter = this.state.players.find((p) => p && p.peerId === invite.fromPeerId);
+      if (accepted && invite.mode === "coop_2v2" && !this._areExplicitlyPartied(me, inviter)) {
+        accepted = false;
+        this.emit("toast", {
+          kind: "warn",
+          title: "Party Required",
+          message: "You must still be in a party with the inviter to join a Co-op 2v2 battle.",
+        });
+      }
 
       const reply = {
         t: accepted ? "battle_accept" : "battle_decline",

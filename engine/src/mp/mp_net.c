@@ -866,24 +866,15 @@ uint8_t MpNet_GetCoopPartnerSlot(void)
     if (!MpWorldSync_IsLocalTutorialComplete())
         return 0xFFu;
 
-    if (localTag != 0) {
+    /* Co-op 2v2 partners must be explicitly partied (matching non-zero party tag).
+     * Merely sharing a room with another player never makes them a co-op partner. */
+    if (localTag == 0)
+        return 0xFFu;
+
+    {
         uint8_t paired = MpNet_FindExplicitPairSlot();
         if (paired != 0xFFu && !IsPeerInTutorialOrUnready(paired))
             return paired;
-        return 0xFFu;
-    }
-
-    if (sRunConfig.soulLinkMode == MP_SOULLINK_PAIRS) {
-        uint8_t paired = local ^ 1u;
-        if (paired < MP_MAX_PLAYERS && sPeers[paired].connected && sPeers[paired].partyPairTag == 0
-         && !IsPeerInTutorialOrUnready(paired))
-            return paired;
-    }
-
-    for (uint8_t i = 0; i < MP_MAX_PLAYERS; i++) {
-        if (i != local && sPeers[i].connected && sPeers[i].partyPairTag == 0
-         && !IsPeerInTutorialOrUnready(i))
-            return i;
     }
     return 0xFFu;
 }

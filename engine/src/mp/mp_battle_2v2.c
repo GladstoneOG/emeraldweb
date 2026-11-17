@@ -44,6 +44,14 @@ extern u8 GetFirstFaintedPartyIndex(enum BattlerId battler);
 #define MP_BUSY_PROMPT_WAIT       1u
 #define MP_BUSY_PROMPT_PROCEED_AI 2u
 
+/* PollBusyTrainerPrompt runs from both the per-frame step and the battle-start task, so this is
+ * roughly 45 seconds. After that the prompt falls back to an AI partner so the field never hard-freezes. */
+#define MP_BUSY_PROMPT_MAX_POLLS  5400u
+
+/* A synced battle whose partner has no live in-battle state for this many frames is abandoned
+ * (partner reloaded / cancelled / never joined) and finishes with an AI partner. */
+#define MP_PARTNER_ABSENT_MAX_FRAMES 480u
+
 struct MpQueuedTurnAction {
     bool valid;
     struct MpBattleTurnActionPayload pkt;
@@ -119,6 +127,8 @@ struct MpBattleSessionState {
     uint16_t busyPromptOpponentB;
     bool busyPromptTwoOpponents;
     uint32_t busyPromptBattleSeed;
+    uint32_t busyPromptWaitFrames;
+    uint16_t partnerAbsentFrames;
 };
 
 static struct MpBattleSessionState sBattleSession;
@@ -191,6 +201,8 @@ static void ResetBattleSessionFields(bool preservePostBattleMeta)
     sBattleSession.busyPromptOpponentB = 0xFFFF;
     sBattleSession.busyPromptTwoOpponents = false;
     sBattleSession.busyPromptBattleSeed = 0;
+    sBattleSession.busyPromptWaitFrames = 0;
+    sBattleSession.partnerAbsentFrames = 0;
     ResetRemotePartyCache();
     memset(sBattleSession.remoteActions, 0, sizeof(sBattleSession.remoteActions));
     memset(sBattleSession.remoteSwitches, 0, sizeof(sBattleSession.remoteSwitches));
@@ -285,6 +297,29 @@ static uint16_t FindPartnerPeerId(uint8_t *outSlot)
         }
     }
 
+    if (outSlot != NULL)
+        *outSlot = 0xFF;
+    return 0;
+}
+
+/* Co-op partners are resolved strictly from the explicit party pairing; only Friendly PvP
+ * (a manual, user-initiated invite) may target any connected remote player. */
+static uint16_t FindPartnerPeerIdForMode(uint8_t mode, uint8_t *outSlot)
+{
+    uint8_t slot;
+    const MpPeerState *ps;
+
+    if (mode == MP_BATTLE_PVP)
+        return FindPartnerPeerId(outSlot);
+
+    slot = MpNet_FindExplicitPairSlot();
+    ps = (slot < MP_MAX_PLAYERS) ? MpNet_GetPeerState(slot) : NULL;
+    if (ps != NULL && ps->connected)
+    {
+        if (outSlot != NULL)
+            *outSlot = slot;
+        return (ps->peerId != 0) ? ps->peerId : (uint16_t)(slot + 1u);
+    }
     if (outSlot != NULL)
         *outSlot = 0xFF;
     return 0;
@@ -828,6 +863,8 @@ static uint8_t BusyReasonToCode(const char *reason)
         return 3;
     if (strcmp(reason, "different_map") == 0)
         return 4;
+    if (strcmp(reason, "not_partied") == 0)
+        return 5;
     return 0;
 }
 
@@ -839,6 +876,7 @@ static const char *BusyCodeToReason(uint8_t code)
     case 2: return "in_tutorial";
     case 3: return "not_ready";
     case 4: return "different_map";
+    case 5: return "not_partied";
     default: return "busy";
     }
 }
@@ -923,46 +961,31 @@ static void LaunchCoop2v2SessionFromTrainer(uint32_t seed, uint16_t trainerId,
     SendBattleStartPacket(MP_BATTLE_COOP_2V2, seed, trainerId, opponentB, twoOpponents, partnerPeer);
 }
 
+/* Co-op 2v2 pulls and Wait/AI prompts only ever target an explicitly partied teammate
+ * (matching non-zero party tag, connected). Being in the same room is NOT enough. */
 static uint8_t FindCoopTargetSlot(void)
 {
-    uint8_t local = MpNet_GetLocalSlot();
-    const MpPeerState *localPeer = (local < MP_MAX_PLAYERS) ? MpNet_GetPeerState(local) : NULL;
-    uint8_t localTag = (localPeer != NULL) ? localPeer->partyPairTag : 0u;
-    uint8_t explicitPair = MpNet_FindExplicitPairSlot();
-    const MpRunConfig *cfg;
-    uint8_t coopPartner;
+    return MpNet_FindExplicitPairSlot();
+}
 
-    if (explicitPair != 0xFFu)
-        return explicitPair;
-    if (localTag != 0u)
-        return 0xFFu;
+static void ResolveBusyPromptWithAiPartner(const char *reason)
+{
+    uint32_t seed = (sBattleSession.busyPromptBattleSeed != 0) ? sBattleSession.busyPromptBattleSeed : 0x20260401u;
+    uint8_t prevSlot = sBattleSession.busyPromptPartnerSlot;
 
-    coopPartner = MpNet_GetCoopPartnerSlot();
-    if (coopPartner != 0xFFu)
-        return coopPartner;
-
-    /* When partyPairTag == 0 (default room state), include default unpaired co-op
-     * partner even while in_tutorial or not_ready so Wait/AI prompt still triggers. */
-    cfg = MpNet_GetRunConfig();
-    if (cfg != NULL && cfg->soulLinkMode == MP_SOULLINK_PAIRS)
-    {
-        uint8_t paired = local ^ 1u;
-        if (paired < MP_MAX_PLAYERS)
-        {
-            const MpPeerState *ps = MpNet_GetPeerState(paired);
-            if (ps != NULL && ps->connected && ps->partyPairTag == 0u)
-                return paired;
-        }
-    }
-
-    for (uint8_t i = 0; i < MP_MAX_PLAYERS; i++)
-    {
-        const MpPeerState *ps = MpNet_GetPeerState(i);
-        if (i != local && ps != NULL && ps->connected && ps->partyPairTag == 0u)
-            return i;
-    }
-
-    return 0xFFu;
+    sBattleSession.busyPromptPending = false;
+    sBattleSession.busyPromptChoice = MP_BUSY_PROMPT_UNDECIDED;
+    sBattleSession.busyPromptWaitFrames = 0;
+    SeedDeterministicBattleRng(seed);
+    AttachFallbackAiPartnerFlags(&gBattleTypeFlags, seed);
+#ifdef WASM_PLATFORM
+    if (reason != NULL && prevSlot < MP_MAX_PLAYERS)
+        WasmMp_NotifyTeammateBusy((int)prevSlot, reason);
+    WasmMp_NotifyBusyPromptResolved();
+#else
+    (void)reason;
+    (void)prevSlot;
+#endif
 }
 
 static void PollBusyTrainerPrompt(void)
@@ -979,18 +1002,8 @@ static void PollBusyTrainerPrompt(void)
     targetPartner = FindCoopTargetSlot();
     if (targetPartner == 0xFF)
     {
-        uint32_t seed = (sBattleSession.busyPromptBattleSeed != 0) ? sBattleSession.busyPromptBattleSeed : 0x20260401u;
-        uint8_t prevSlot = sBattleSession.busyPromptPartnerSlot;
-
-        sBattleSession.busyPromptPending = false;
-        sBattleSession.busyPromptChoice = MP_BUSY_PROMPT_UNDECIDED;
-        SeedDeterministicBattleRng(seed);
-        AttachFallbackAiPartnerFlags(&gBattleTypeFlags, seed);
-#ifdef WASM_PLATFORM
-        if (prevSlot < MP_MAX_PLAYERS)
-            WasmMp_NotifyTeammateBusy((int)prevSlot, "not_ready");
-        WasmMp_NotifyBusyPromptResolved();
-#endif
+        /* Party dissolved / partner disconnected while the prompt was up. */
+        ResolveBusyPromptWithAiPartner("not_ready");
         return;
     }
 
@@ -1006,12 +1019,19 @@ static void PollBusyTrainerPrompt(void)
         uint16_t opponentB = sBattleSession.busyPromptOpponentB;
         bool twoOpponents = sBattleSession.busyPromptTwoOpponents;
 
+        sBattleSession.busyPromptWaitFrames = 0;
         LaunchCoop2v2SessionFromTrainer(seed, trainerId, opponentB, twoOpponents,
                                         coopPartner, partnerPeer, &gBattleTypeFlags);
 #ifdef WASM_PLATFORM
         WasmMp_NotifyBusyPromptResolved();
 #endif
+        return;
     }
+
+    /* Watchdog: never hold the field forever, whatever the reason the teammate stays unavailable
+     * (UI prompt missed, teammate stuck in a cutscene or reloading, stale peer state...). */
+    if (++sBattleSession.busyPromptWaitFrames >= MP_BUSY_PROMPT_MAX_POLLS)
+        ResolveBusyPromptWithAiPartner((busyReason != NULL) ? busyReason : "busy");
 }
 
 bool MpBattle2v2_WaitForBusyTrainerPrompt(void)
@@ -1022,8 +1042,6 @@ bool MpBattle2v2_WaitForBusyTrainerPrompt(void)
 
 void MpBattle2v2_ResolveBusyPrompt(int choice)
 {
-    uint32_t seed;
-
     if (!sBattleSession.busyPromptPending)
         return;
     if (choice == 0)
@@ -1032,14 +1050,7 @@ void MpBattle2v2_ResolveBusyPrompt(int choice)
         return;
     }
 
-    seed = (sBattleSession.busyPromptBattleSeed != 0) ? sBattleSession.busyPromptBattleSeed : 0x20260401u;
-    sBattleSession.busyPromptPending = false;
-    sBattleSession.busyPromptChoice = MP_BUSY_PROMPT_UNDECIDED;
-    SeedDeterministicBattleRng(seed);
-    AttachFallbackAiPartnerFlags(&gBattleTypeFlags, seed);
-#ifdef WASM_PLATFORM
-    WasmMp_NotifyBusyPromptResolved();
-#endif
+    ResolveBusyPromptWithAiPartner(NULL);
 }
 
 void MpBattle2v2_Init(void)
@@ -1051,6 +1062,8 @@ void MpBattle2v2_Init(void)
     ResetBattleSessionFields(false);
     MpNet_RegisterHandler(MP_CH_BATTLE, MpBattle2v2_HandlePacket);
 }
+
+static void UpdatePartnerAbsentWatchdog(void);
 
 void MpBattle2v2_StepFrame(void)
 {
@@ -1071,6 +1084,7 @@ void MpBattle2v2_StepFrame(void)
     }
 
     PollBusyTrainerPrompt();
+    UpdatePartnerAbsentWatchdog();
     if (sBattleSession.active && !sBattleSession.isInitiator && sBattleSession.hasSeedSync && sBattleSession.seedHash != 0)
         MpBattle2v2_VerifySyncedSeedBeforeTrainerBuild();
 
@@ -1091,7 +1105,7 @@ void MpBattle2v2_StepFrame(void)
             if (targetPeer == 0)
             {
                 uint8_t resolvedSlot = 0xFF;
-                targetPeer = FindPartnerPeerId(&resolvedSlot);
+                targetPeer = FindPartnerPeerIdForMode(launchMode, &resolvedSlot);
                 if (sBattleSession.pendingPartnerSlot >= MP_MAX_PLAYERS && resolvedSlot < MP_MAX_PLAYERS)
                     sBattleSession.pendingPartnerSlot = resolvedSlot;
             }
@@ -1435,6 +1449,54 @@ static bool IsPartnerConnectedForSync(void)
     return (ps != NULL && ps->connected);
 }
 
+/* Safety net for "stuck waiting for other player": if we are inside a synced battle and the partner has
+ * been reporting that it is NOT in battle for a sustained period (it reloaded, aborted, never joined, or
+ * its cancel packet was lost), stop waiting for it and finish the battle with an AI partner. */
+static void UpdatePartnerAbsentWatchdog(void)
+{
+    const MpPeerState *ps;
+
+    if (!MpBattle2v2_IsSyncedSession() || sBattleSession.remoteBattleEnded
+     || !sBattleSession.inBattleCallbackActive || !gMain.inBattle
+     || sBattleSession.partnerSlot >= MP_MAX_PLAYERS)
+    {
+        sBattleSession.partnerAbsentFrames = 0;
+        return;
+    }
+
+    ps = MpNet_GetPeerState(sBattleSession.partnerSlot);
+    if (ps == NULL || !ps->connected)
+    {
+        /* Disconnects are already handled elsewhere. */
+        sBattleSession.partnerAbsentFrames = 0;
+        return;
+    }
+
+    if (ps->hasPosition && (ps->pos.inBattle & MP_OW_STATUS_IN_BATTLE) != 0)
+    {
+        sBattleSession.partnerAbsentFrames = 0;
+        return;
+    }
+
+    if (++sBattleSession.partnerAbsentFrames >= MP_PARTNER_ABSENT_MAX_FRAMES)
+    {
+        uint8_t slot = sBattleSession.partnerSlot;
+        uint16_t peerId = (ps->peerId != 0) ? ps->peerId : sBattleSession.partnerPeerId;
+        uint8_t cancelOutcome = 0;
+
+        /* Tell the other battle session to switch to its local AI too. */
+        if (peerId != 0)
+            MpNet_SendBinary(MP_CH_BATTLE, peerId, MP_PKT_BAT_END, &cancelOutcome, 1);
+        sBattleSession.remoteBattleEnded = true;
+        sBattleSession.partnerAbsentFrames = 0;
+#ifdef WASM_PLATFORM
+        WasmMp_NotifyTeammateBusy((int)slot, "not_ready");
+#else
+        (void)slot;
+#endif
+    }
+}
+
 static u8 AsciiCharToGba(char ch)
 {
     if (ch >= 'A' && ch <= 'Z')
@@ -1536,7 +1598,7 @@ void MpBattle2v2_StartSyncedBattle(uint32_t battleSeed, uint8_t mode, uint16_t t
         }
         else
         {
-            targetPeer = FindPartnerPeerId(&targetSlot);
+            targetPeer = FindPartnerPeerIdForMode(mode, &targetSlot);
         }
     }
 
@@ -2628,6 +2690,18 @@ void MpBattle2v2_HandlePacket(uint16_t fromPeerId, uint8_t opcode, const void *p
                 SendDeclineBusy(replyPeer, "in_tutorial");
             return;
         }
+        /* Co-op 2v2 pulls are only honoured from the explicitly partied teammate. A sender that is
+         * merely in the same room (or whose party view is stale) is declined so nobody is dragged
+         * into a battle the other side will never join. */
+        if (pkt->mode == MP_BATTLE_COOP_2V2)
+        {
+            uint8_t pairSlot = MpNet_FindExplicitPairSlot();
+            if (pairSlot >= MP_MAX_PLAYERS || pairSlot != pkt->partnerSlot)
+            {
+                SendDeclineBusy(replyPeer, "not_partied");
+                return;
+            }
+        }
         if (sBattleSession.active
          && pkt->battleSeed == sBattleSession.battleSeed
          && pkt->mode == sBattleSession.mode
@@ -2996,9 +3070,9 @@ void MpBattle2v2_StartSyncedFromBridge(uint32_t battleSeed, uint8_t mode, uint8_
 
     if (resolvedMode == MP_BATTLE_COOP_2V2)
     {
-        uint8_t coopPartner = (resolvedSlot < MP_MAX_PLAYERS) ? resolvedSlot : MpNet_GetCoopPartnerSlot();
-        if (coopPartner >= MP_MAX_PLAYERS)
-            coopPartner = MpNet_FindExplicitPairSlot();
+        uint8_t coopPartner = MpNet_FindExplicitPairSlot();
+        if (resolvedSlot < MP_MAX_PLAYERS && resolvedSlot != coopPartner)
+            coopPartner = 0xFF; /* requested teammate is not in our party */
         resolvedSlot = coopPartner;
         if (coopPartner == 0xFF)
         {
@@ -3047,7 +3121,7 @@ void MpBattle2v2_StartSyncedFromBridge(uint32_t battleSeed, uint8_t mode, uint8_
             resolvedPeer = (ps->peerId != 0) ? ps->peerId : (uint16_t)(resolvedSlot + 1u);
     }
     if (resolvedMode != MP_BATTLE_SOLO_2V2 && resolvedSlot >= MP_MAX_PLAYERS && resolvedPeer == 0)
-        resolvedPeer = FindPartnerPeerId(&resolvedSlot);
+        resolvedPeer = FindPartnerPeerIdForMode(resolvedMode, &resolvedSlot);
 
     uint32_t resolvedSeed = (battleSeed != 0) ? battleSeed : 0x20260401u;
     if ((sBattleSession.pendingLaunch && sBattleSession.pendingSeed == resolvedSeed)

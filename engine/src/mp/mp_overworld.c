@@ -1711,7 +1711,9 @@ void MpOverworld_OnFrame(void)
 
     /* Schedule Flash auto-save after battles or map transitions outside the intro truck. */
     if (sWasInBattle && !inBattle && IsInFreeOverworld()) {
-        sPendingAutoSaveDelay = 15;
+        /* Commit catch/death/party changes as soon as the field returns; a reload during the
+         * old delay could otherwise restore the pre-battle save while Soul-Link state stayed current. */
+        sPendingAutoSaveDelay = 1;
     } else if (IsInFreeOverworld() &&
                !(mapGroup == MAP_GROUP(MAP_INSIDE_OF_TRUCK) && mapNum == MAP_NUM(MAP_INSIDE_OF_TRUCK)) &&
                (!sHasAutoSaveBaseline || sLastAutoSaveGroup != mapGroup || sLastAutoSaveNum != mapNum)) {

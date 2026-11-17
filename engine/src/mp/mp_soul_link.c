@@ -686,7 +686,7 @@ static void BroadcastStarterCatchPacket(const struct Pokemon *mon, uint16_t link
     pkt.level = (uint8_t)GetMonData((struct Pokemon *)mon, MON_DATA_LEVEL);
     pkt.key = ExtractKeyFromMon(mon);
     MpNet_SendBinary(MP_CH_SOUL_LINK, MP_PEER_BROADCAST, MP_PKT_SL_ROUTE_CATCH, &pkt, (uint16_t)sizeof(pkt));
-    MpOverworld_RequestAutoSave(10);
+    MpOverworld_RequestAutoSave(1);
 }
 
 static void KillMatchingEntriesImmediate(struct MpSoulLinkKey key, uint16_t linkId, uint16_t mapsec)
@@ -759,6 +759,11 @@ void MpSoulLink_OnWildEncounterFinished(uint16_t mapsec, bool caughtAny, bool al
         }
     }
 
+    if (rs != NULL)
+    {
+        /* Persist the route outcome and player position once the battle returns to the field. */
+        MpOverworld_RequestAutoSave(1);
+    }
     sWildEncounterActive = false;
     sActiveWildMapsec = MP_MAPSEC_INVALID;
     sActiveWildCaughtAny = false;
@@ -854,7 +859,7 @@ void MpSoulLink_OnPokemonCaptured(struct Pokemon *mon, uint16_t mapsec)
     pkt.level = (uint8_t)GetMonData(mon, MON_DATA_LEVEL);
     pkt.key = ExtractKeyFromMon(mon);
     MpNet_SendBinary(MP_CH_SOUL_LINK, MP_PEER_BROADCAST, MP_PKT_SL_ROUTE_CATCH, &pkt, (uint16_t)sizeof(pkt));
-    MpOverworld_RequestAutoSave(10);
+    MpOverworld_RequestAutoSave(1);
 }
 
 void MpSoulLink_OnGiftOrEggReceived(struct Pokemon *mon, uint16_t mapsec)
