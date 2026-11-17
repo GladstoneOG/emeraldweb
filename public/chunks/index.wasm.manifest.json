@@ -1,8 +1,8 @@
 {
   "file": "index.wasm",
-  "version": "c8dc41225834",
-  "sha256": "c8dc4122583430386c2971f451a793a3463e457ea478cd8257756916122c5498",
-  "totalBytes": 27486151,
+  "version": "6409ebff21d5",
+  "sha256": "6409ebff21d5daa62406a4ebef7ab3dac170a5f9cba4a003b1726d9479d26ce8",
+  "totalBytes": 27488182,
   "chunkSize": 19922944,
   "chunks": [
     "chunks/index.wasm.part00",

@@ -21,6 +21,7 @@
   const CH_BATTLE = 3;
   const CH_SOUL_LINK = 4;
   const CH_TRADE = 5;
+  const MP_MAX_PLAYERS = 4;
 
   const STORAGE_KEYS = {
     playerName: "pokemon_web_player_name",
@@ -1157,6 +1158,7 @@
       soulLink: {
         nextLinkNum: 1,
         routeLocks: {}, // key: `${groupKey}:${routeId}` -> { linkId, routeName, members: { slotIndex: monUid } }
+        partyLocks: [], // Soul-Link pairs are permanent for this run.
         graveyard: [],
       },
       activeInvites: [], // incoming battle / pvp / trade invites
@@ -1888,7 +1890,6 @@
       for (let i = 1; i < 4; i++) {
         this.state.players[i].connected = false;
         this.state.players[i].peerId = 0;
-        this.state.players[i].partyId = null;
         this.state.players[i].busy = false;
         this.state.players[i].inBattle = false;
         this.state.players[i].tutorialComplete = false;
@@ -1913,6 +1914,7 @@
         });
         return false;
       }
+      const previousRunId = this.state.runConfig && this.state.runConfig.runId;
       this.disconnect();
       let freshResetMode = "";
       if (resumeSnapshot) {
@@ -1933,6 +1935,14 @@
           },
           this.state.runConfig
         );
+        if (previousRunId && this.state.runConfig.runId !== previousRunId) {
+          this.state.soulLink = makeInitialState().soulLink;
+          for (const player of this.state.players) {
+            if (!player) continue;
+            player.partyId = null;
+            player.soulLinkGroup = null;
+          }
+        }
       } else {
         this.state.runConfig = normalizeRunConfig(this.state.runConfig, makeDefaultRunConfig());
       }
@@ -3092,6 +3102,7 @@
       }
       if (msg.world) this.state.world = msg.world;
       if (msg.soulLink) this.state.soulLink = msg.soulLink;
+      this._restoreLockedSoulLinkParties(this.state.players, this.state.soulLink);
       if (!this._flashSavesBySlot) this._flashSavesBySlot = {};
 
       const resolved =
@@ -3229,7 +3240,9 @@
           case "players_sync": {
             if (Array.isArray(msg.players)) {
               this.state.players = [0, 1, 2, 3].map((idx) => sanitizePlayerSlot(msg.players[idx], idx));
+              this._restoreLockedSoulLinkParties(this.state.players, this.state.soulLink);
               global.PokemonWasmBridge._syncPeersToWasm(this.state.players);
+              global.PokemonWasmBridge._syncSoulLinkToWasm(this.state);
               this.emit("players");
             }
             break;
@@ -3310,7 +3323,28 @@
           }
         }
       } else if (channel === CH_WORLD_SYNC) {
-        if (msg.t === "world_sync" && msg.world) {
+        if (msg.t === "host_cheat_action" && fromPeerId === 1) {
+          const result = global.PokemonWasmBridge._runCheatAction(
+            Number(msg.actionKind),
+            Number(msg.arg0) || 0,
+            Number(msg.arg1) || 0,
+            0
+          );
+          if (result) {
+            this.addLog(msg.actionKind === 12 ? "The host added an item to your bag." : "The host started a Pokémon evolution.", "gold");
+            this.emit("toast", {
+              kind: "gold",
+              title: "Host Cheat",
+              message: msg.actionKind === 12 ? "An item was added to your bag." : "Evolution started.",
+            });
+          } else {
+            this.emit("toast", {
+              kind: "warn",
+              title: "Host Cheat",
+              message: "That action could not be applied right now.",
+            });
+          }
+        } else if (msg.t === "world_sync" && msg.world) {
           this.state.world = msg.world;
           global.PokemonWasmBridge._dispatchWasmJson(channel, fromPeerId, msg, rawBytes);
           this.emit("world");
@@ -3470,6 +3504,27 @@
       global.PokemonWasmBridge._applySpeedToWasm(spd);
     }
 
+    runHostCheatAction(targetSlotIndex, actionKind, arg0, arg1) {
+      const kind = Number(actionKind);
+      const targetIdx = Number(targetSlotIndex);
+      const myIdx = Number(this.state.connection.mySlotIndex) || 0;
+      if (!this.isHost() || !Number.isInteger(targetIdx) || targetIdx < 0 || targetIdx >= MP_MAX_PLAYERS) {
+        return false;
+      }
+      if (kind !== 11 && kind !== 12) return false;
+      if (targetIdx === myIdx) {
+        return Boolean(global.PokemonWasmBridge._runCheatAction(kind, Number(arg0) || 0, Number(arg1) || 0, 0));
+      }
+      const target = this.state.players[targetIdx];
+      if (!this.isNetworkHost() || !target || !target.connected || target.peerId <= 1) return false;
+      return this.sendJson(CH_WORLD_SYNC, target.peerId, {
+        t: "host_cheat_action",
+        actionKind: kind,
+        arg0: Number(arg0) || 0,
+        arg1: Number(arg1) || 0,
+      });
+    }
+
     // --- Co-op Feature Gating & Party Pairing (Max 2 per party) ---
     getFeatureGateReason(targetSlotIndex) {
       if (this.state.runConfig && this.state.runConfig.gameOver) {
@@ -3514,10 +3569,17 @@
     }
 
     leaveParty() {
+      const myIdx = this.state.connection.mySlotIndex;
+      const me = this.state.players[myIdx];
+      if (me && me.partyId) {
+        this._emitLocalGateRejection("party_leave", "Soul-Link parties are permanent once formed.");
+        return false;
+      }
       if (this.isHost()) {
-        this._hostHandlePartyLeave(this.state.connection.mySlotIndex);
+        return this._hostHandlePartyLeave(this.state.connection.mySlotIndex);
       } else {
         this.sendJsonToHost(CH_CONTROL, { t: "party_leave" });
+        return true;
       }
     }
 
@@ -3527,6 +3589,11 @@
       if (!pA || !pB || slotAIdx === slotBIdx) return false;
 
       const requesterPeer = slotAIdx === 0 ? 1 : pA.peerId;
+      if (pA.partyId || pB.partyId) {
+        const reason = "Soul-Link parties are permanent once formed. A paired player cannot join another party.";
+        this._notifyHostGateRejection(requesterPeer, "party_pair", reason);
+        return false;
+      }
       const gateReason = this._getHostSlotGateReason(pA, pB);
       if (gateReason) {
         this._notifyHostGateRejection(requesterPeer, "party_pair", gateReason);
@@ -3617,9 +3684,15 @@
       pB.partyId = partyTag;
       pA.soulLinkGroup = partyTag;
       pB.soulLinkGroup = partyTag;
+      this.state.soulLink.partyLocks = Array.isArray(this.state.soulLink.partyLocks)
+        ? this.state.soulLink.partyLocks
+        : [];
+      this.state.soulLink.partyLocks.push({
+        partyTag,
+        members: [pA, pB].map((p) => ({ slotIndex: p.slotIndex, userId: p.userId || "" })),
+      });
 
       // Migrate prior solo/pair route locks & linkIds into the shared Soul-Link group
-      let migratedLocks = false;
       const deadLinkIds = new Set();
       for (const [routeId, entries] of routeBuckets.entries()) {
         const newLockKey = `${partyTag}:${routeId}`;
@@ -3628,6 +3701,7 @@
         let chosenLinkId = "";
         let chosenRouteName = routeId;
         const mergedMembers = {};
+        const mergedSpecies = {};
         const oldLinkIds = [];
         for (const e of entries) {
           if (!e.lock) continue;
@@ -3637,9 +3711,9 @@
             oldLinkIds.push(e.lock.linkId);
           }
           Object.assign(mergedMembers, e.lock.members || {});
+          Object.assign(mergedSpecies, e.lock.memberSpecies || {});
           if (e.lockKey !== newLockKey) {
             delete routeLocks[e.lockKey];
-            migratedLocks = true;
           }
         }
         routeLocks[newLockKey] = {
@@ -3648,6 +3722,7 @@
           routeId,
           routeName: chosenRouteName,
           members: mergedMembers,
+          memberSpecies: mergedSpecies,
           dead: anyDead,
           failed: anyFailed,
         };
@@ -3664,7 +3739,6 @@
               }
             }
           }
-          migratedLocks = true;
         }
       }
 
@@ -3715,7 +3789,6 @@
           const idx = slot.party.indexOf(mon);
           if (idx !== -1) slot.party.splice(idx, 1);
         }
-        migratedLocks = true;
       }
 
       let paritySummary = "";
@@ -3737,7 +3810,7 @@
       global.PokemonWasmBridge._syncSoulLinkToWasm(this.state);
       this.addLog(`${pA.name} and ${pB.name} paired up (${partyTag}) for 2v2 Co-op!`, "gold");
       this.broadcastControl({ t: "players_sync", players: this.state.players });
-      if ((migratedLocks || parityVictims.length > 0) && this.isNetworkHost()) {
+      if (this.isNetworkHost()) {
         const firstDeadLink = deadLinkIds.values().next().value || "";
         this.broadcastChannel(CH_SOUL_LINK, {
           t: "soullink_sync",
@@ -3750,27 +3823,17 @@
           paritySummary: paritySummary || undefined,
         });
       }
-      if (parityVictims.length > 0 || migratedLocks) {
-        this.saveRunSnapshotToDb();
-      }
+      this.saveRunSnapshotToDb();
       this.emit("players");
       return true;
     }
 
     _hostHandlePartyLeave(slotIdx) {
       const p = this.state.players[slotIdx];
-      if (!p || !p.partyId) return;
-      const oldTag = p.partyId;
-      for (const pl of this.state.players) {
-        if (pl.partyId === oldTag) {
-          pl.soulLinkGroup = pl.soulLinkGroup || oldTag;
-          pl.partyId = null;
-        }
-      }
-      global.PokemonWasmBridge._syncPeersToWasm(this.state.players);
-      this.addLog(`${p.name} dissolved ${oldTag}.`, "info");
-      this.broadcastControl({ t: "players_sync", players: this.state.players });
-      this.emit("players");
+      if (!p || !p.partyId) return false;
+      const requesterPeer = slotIdx === 0 ? 1 : p.peerId;
+      this._notifyHostGateRejection(requesterPeer, "party_leave", "Soul-Link parties are permanent once formed.");
+      return false;
     }
 
     _unlockMapKey(mapGroup, mapNum) {
@@ -4290,6 +4353,7 @@
             routeId,
             routeName,
             members: { [slotIndex]: monUid },
+            memberSpecies: { [slotIndex]: speciesId },
             dead: false,
             failed: false,
           };
@@ -4297,6 +4361,8 @@
           existingLock.linkId = existingLock.linkId || linkIdStr;
           existingLock.members = existingLock.members || {};
           existingLock.members[slotIndex] = monUid;
+          existingLock.memberSpecies = existingLock.memberSpecies || {};
+          existingLock.memberSpecies[slotIndex] = speciesId;
         }
         const lock = this.state.soulLink.routeLocks[lockKey];
         const speciesLabel = (existingMon && existingMon.species) || `Pokemon #${speciesId}`;
@@ -4470,7 +4536,7 @@
       }
       if (!lock) {
         const linkId = `LINK-${String(this.state.soulLink.nextLinkNum++).padStart(2, "0")}`;
-        lock = { linkId, groupKey, routeId, routeName, members: {}, dead: false, failed: false };
+        lock = { linkId, groupKey, routeId, routeName, members: {}, memberSpecies: {}, dead: false, failed: false };
         this.state.soulLink.routeLocks[lockKey] = lock;
       }
 
@@ -4493,6 +4559,8 @@
         slot.party.push(newMon);
       }
       lock.members[slotIndex] = newMon.uid;
+      lock.memberSpecies = lock.memberSpecies || {};
+      lock.memberSpecies[slotIndex] = Number(mon && mon.speciesId) || 0;
 
       const linkAlert = `${slot.name} caught ${newMon.species} on ${newMon.originMap} [${lock.linkId}]`;
       this.addLog(linkAlert, "gold");
@@ -5270,6 +5338,26 @@
       };
     }
 
+    _restoreLockedSoulLinkParties(players, soulLink) {
+      const slots = Array.isArray(players) ? players : [];
+      const locks = soulLink && Array.isArray(soulLink.partyLocks) ? soulLink.partyLocks : [];
+      for (const lock of locks) {
+        if (!lock || typeof lock.partyTag !== "string" || !Array.isArray(lock.members) || lock.members.length !== 2) continue;
+        const matched = lock.members.map((member) => {
+          if (!member || typeof member !== "object") return null;
+          const userId = String(member.userId || "");
+          if (userId) return slots.find((slot) => slot && slot.userId === userId) || null;
+          const idx = Number(member.slotIndex);
+          return Number.isInteger(idx) && idx >= 0 && idx < MP_MAX_PLAYERS ? slots[idx] || null : null;
+        });
+        if (!matched[0] || !matched[1] || matched[0] === matched[1]) continue;
+        for (const slot of matched) {
+          if (!slot.partyId) slot.partyId = lock.partyTag;
+          if (!slot.soulLinkGroup) slot.soulLinkGroup = lock.partyTag;
+        }
+      }
+    }
+
     async applySnapshotLocal(snapshot, markAsHost, options) {
       if (!snapshot || !snapshot.runConfig) return false;
       const fromBroadcast = Boolean(options && options.fromBroadcast);
@@ -5293,6 +5381,7 @@
           )
         );
       }
+      this._restoreLockedSoulLinkParties(this.state.players, this.state.soulLink);
       this._flashSavesBySlot = cloneData(snapshot.flashSavesBySlot || {});
       if (!fromBroadcast) {
         const myIdx = markAsHost ? 0 : (this.state.connection.mySlotIndex || 0);
@@ -5398,6 +5487,8 @@
           idx
         );
       });
+      const soulLink = worldState.soulLink || makeInitialState().soulLink;
+      this._restoreLockedSoulLinkParties(players, soulLink);
       const flashSavesBySlot = {};
       const targetSlot = Number.isInteger(Number(slotIdxToFetch)) ? Number(slotIdxToFetch) : 0;
       const slotsToFetch = new Set([targetSlot]);
@@ -5427,7 +5518,7 @@
         savedAt: cloudRun.updatedAt ? new Date(cloudRun.updatedAt).toISOString() : new Date().toISOString(),
         runConfig: runCfg,
         world: worldState.world || makeInitialState().world,
-        soulLink: worldState.soulLink || makeInitialState().soulLink,
+        soulLink,
         playerSlots: players,
         flashSaveB64: flashSavesBySlot[0] || "",
         flashSavesBySlot,
@@ -5597,8 +5688,14 @@
         this.state.soulLink = {
           nextLinkNum: 1,
           routeLocks: {},
+          partyLocks: [],
           graveyard: [],
         };
+        for (const player of this.state.players) {
+          if (!player) continue;
+          player.partyId = null;
+          player.soulLinkGroup = null;
+        }
       }
       if (this.state.trade && this.state.trade.active) {
         this.cancelTrade();
@@ -5667,6 +5764,32 @@
   global.PokemonWasmBridge = {
     _getWasmModule() {
       return client.wasmModule;
+    },
+
+    _runCheatAction(kind, arg0, arg1, arg2) {
+      const m = client.wasmModule;
+      if (!m || typeof m._mp_test_action !== "function") return 0;
+      return m._mp_test_action(Number(kind) || 0, Number(arg0) || 0, Number(arg1) || 0, Number(arg2) || 0);
+    },
+
+    _getCheatItemCatalog() {
+      const m = client.wasmModule;
+      if (!m || typeof m._mp_test_query !== "function" || typeof m._mp_get_item_name !== "function") return [];
+      const itemCount = Math.max(0, Math.min(2048, Number(m._mp_test_query(11, 0, 0)) || 0));
+      const bufferSize = 64;
+      const ptr = typeof m._malloc === "function" ? m._malloc(bufferSize) : 0;
+      if (!ptr) return [];
+      const items = [];
+      try {
+        for (let itemId = 1; itemId < itemCount; itemId++) {
+          if (!m._mp_get_item_name(itemId, ptr, bufferSize)) continue;
+          const name = m.UTF8ToString(ptr);
+          if (name) items.push({ itemId, name });
+        }
+      } finally {
+        if (typeof m._free === "function") m._free(ptr);
+      }
+      return items;
     },
 
     onWasmReady(moduleObj) {
@@ -6093,7 +6216,7 @@
       for (let idx = 0; idx < 4; idx++) {
         const p = list[idx];
         if (!p) continue;
-        const pairTag = p.connected ? computePartyPairTag(p.partyId) : 0;
+        const pairTag = computePartyPairTag(p.partyId);
         const peerId = p.connected ? (Number(p.peerId) || (idx + 1)) : 0;
         this._updatePeerMetaInWasm(idx, peerId, Boolean(p.connected), pairTag, p.name || "");
       }
@@ -6135,7 +6258,18 @@
       const locks = sl.routeLocks || {};
       const routes = [];
       const kills = [];
+      const partnerSpecies = [];
       const seenKillKeys = new Set();
+      const seenPartnerSpecies = new Set();
+
+      const addPartnerSpecies = (slotIndex, speciesId) => {
+        const slot = Number(slotIndex);
+        const species = Number(speciesId);
+        const key = `${slot}:${species}`;
+        if (slot < 0 || slot >= MP_MAX_PLAYERS || slot === myIdx || species <= 0 || seenPartnerSpecies.has(key)) return;
+        seenPartnerSpecies.add(key);
+        partnerSpecies.push({ slot, species });
+      };
 
       for (const [lockKey, lock] of Object.entries(locks)) {
         if (!lock || !lockKey.startsWith(prefix)) continue;
@@ -6150,6 +6284,14 @@
           dead: isDead,
           localCaught: Boolean(localUid),
         });
+        for (const [slotIndex, speciesId] of Object.entries(lock.memberSpecies || {})) {
+          addPartnerSpecies(slotIndex, speciesId);
+        }
+        for (const [slotIndex, uid] of Object.entries(lock.members || {})) {
+          const owner = st && Array.isArray(st.players) ? st.players[Number(slotIndex)] : null;
+          const mon = owner && Array.isArray(owner.party) ? owner.party.find((m) => m && m.uid === uid) : null;
+          if (mon) addPartnerSpecies(slotIndex, mon.speciesId);
+        }
         if (isDead && localUid) {
           const uidParts = parseMonUidKeys(localUid);
           if (uidParts) {
@@ -6188,10 +6330,20 @@
         }
       }
 
+      if (st && Array.isArray(st.players)) {
+        for (const player of st.players) {
+          if (!player || player.slotIndex === myIdx || client._getLinkGroupKey(player.slotIndex) !== groupKey) continue;
+          for (const mon of player.party || []) {
+            if (mon && !mon.isEgg) addPartnerSpecies(player.slotIndex, mon.speciesId);
+          }
+        }
+      }
+
       const payload = JSON.stringify({
         nextLinkNum: Math.max(1, Number(sl.nextLinkNum) || 1),
         routes,
         kills,
+        partnerSpecies,
       });
       return Boolean(this._withUtf8String(m, payload, (ptr) => m._mp_import_soullink_json(ptr)));
     },

@@ -84,7 +84,7 @@ WASM_LINK_FLAGS := -sUSE_SDL=0 \
                    -sINITIAL_MEMORY=67108864 \
                    -sMAXIMUM_MEMORY=268435456 \
                    -sSTACK_SIZE=2097152 \
-                   -sEXPORTED_FUNCTIONS="['_main','_malloc','_free','_mp_set_speed_multiplier','_mp_ingest_packet','_mp_trigger_warp','_mp_start_synced_battle','_mp_update_peer_meta','_mp_kill_linked_pokemon','_mp_import_soullink_json','_mp_kill_mon_by_uid','_mp_on_trade_commit','_mp_on_snapshot_loaded','_mp_save_game_now','_mp_test_query','_mp_test_action','_wasm_step_frames','_wasm_get_framebuffer_ptr','_wasm_set_input_mask','_wasm_set_gamepad_mask','_wasm_get_flash_ptr']" \
+                   -sEXPORTED_FUNCTIONS="['_main','_malloc','_free','_mp_set_speed_multiplier','_mp_ingest_packet','_mp_trigger_warp','_mp_start_synced_battle','_mp_update_peer_meta','_mp_kill_linked_pokemon','_mp_import_soullink_json','_mp_kill_mon_by_uid','_mp_on_trade_commit','_mp_on_snapshot_loaded','_mp_save_game_now','_mp_test_query','_mp_test_action','_mp_get_item_name','_wasm_step_frames','_wasm_get_framebuffer_ptr','_wasm_set_input_mask','_wasm_set_gamepad_mask','_wasm_get_flash_ptr']" \
                    -sEXPORTED_RUNTIME_METHODS="['HEAPU8','HEAP16','UTF8ToString','stringToUTF8','lengthBytesUTF8']"
 
 SMOKE_SRCS := $(WASM_PLAT_DIR)/wasm_main.c \

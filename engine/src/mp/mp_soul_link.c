@@ -43,6 +43,9 @@ static MpSoulLinkRouteState sRouteStates[MP_MAX_SOUL_LINK_MAP];
 static uint16_t sRouteStateCount = 0;
 static MpPendingSoulLinkKill sPendingKills[MP_SL_MAX_PENDING_KILLS];
 static uint16_t sPendingKillCount = 0;
+static uint16_t sImportedPartnerSpecies[MP_SOUL_LINK_TABLE_CAP];
+static uint8_t sImportedPartnerSpeciesSlots[MP_SOUL_LINK_TABLE_CAP];
+static uint16_t sImportedPartnerSpeciesCount = 0;
 static uint16_t sNextLinkSeq = 2;
 static bool sRunGameOver = false;
 static bool sGraveyardBoxNamed = false;
@@ -251,30 +254,28 @@ static void MarkMonDeadLocalAndApplyEffects(MpSoulLinkEntry *entry, bool movePcT
 
 static bool IsDirectSpeciesOrEvoMatch(enum Species ownedSpecies, enum Species targetSpecies)
 {
-    const struct Evolution *evos;
-    u32 i;
+    enum Species cursor;
+    u32 depth;
 
     if (ownedSpecies == targetSpecies)
         return true;
 
-    evos = GetSpeciesEvolutions(ownedSpecies);
-    if (evos != NULL)
+    /* Walk both ancestry chains so every member of a multi-stage family is
+     * covered by the Dupes Clause, including branched final evolutions. */
+    cursor = ownedSpecies;
+    for (depth = 0; depth < NUM_SPECIES && cursor != SPECIES_NONE; depth++)
     {
-        for (i = 0; evos[i].method != EVOLUTIONS_END; i++)
-        {
-            if (evos[i].targetSpecies == targetSpecies)
-                return true;
-        }
+        cursor = GetSpeciesPreEvolution(cursor);
+        if (cursor == targetSpecies)
+            return true;
     }
 
-    evos = GetSpeciesEvolutions(targetSpecies);
-    if (evos != NULL)
+    cursor = targetSpecies;
+    for (depth = 0; depth < NUM_SPECIES && cursor != SPECIES_NONE; depth++)
     {
-        for (i = 0; evos[i].method != EVOLUTIONS_END; i++)
-        {
-            if (evos[i].targetSpecies == ownedSpecies)
-                return true;
-        }
+        cursor = GetSpeciesPreEvolution(cursor);
+        if (cursor == ownedSpecies)
+            return true;
     }
     return false;
 }
@@ -296,6 +297,9 @@ void MpSoulLink_ResetRun(void)
     sSoulLinkEntryCount = 0;
     sRouteStateCount = 0;
     sPendingKillCount = 0;
+    memset(sImportedPartnerSpecies, 0, sizeof(sImportedPartnerSpecies));
+    memset(sImportedPartnerSpeciesSlots, 0, sizeof(sImportedPartnerSpeciesSlots));
+    sImportedPartnerSpeciesCount = 0;
     sNextLinkSeq = 2;
     sRunGameOver = false;
     sGraveyardBoxNamed = false;
@@ -593,6 +597,32 @@ bool MpSoulLink_IsSpeciesLineOwned(uint16_t species)
             if (bSp != SPECIES_NONE && IsDirectSpeciesOrEvoMatch(bSp, sp))
                 return true;
         }
+    }
+
+    /* A paired Soul-Link shares the Dupes Clause across both players. The web
+     * bridge imports the partner's caught species so this also works while the
+     * partner is offline or their Pokémon are stored in the PC. */
+    for (i = 0; i < sImportedPartnerSpeciesCount; i++)
+    {
+        enum Species partnerSpecies = SanitizeSpeciesId((enum Species)sImportedPartnerSpecies[i]);
+        if (MpSoulLink_IsSlotLinkedWithLocal(sImportedPartnerSpeciesSlots[i], 0xFF)
+         && partnerSpecies != SPECIES_NONE
+         && IsDirectSpeciesOrEvoMatch(partnerSpecies, sp))
+            return true;
+    }
+
+    /* Live catches arrive over the Soul-Link channel before the bridge has a
+     * chance to persist them in a route lock. Include those immediately. */
+    for (i = 0; i < sSoulLinkEntryCount; i++)
+    {
+        const MpSoulLinkEntry *entry = &sSoulLinkEntries[i];
+        enum Species partnerSpecies = SanitizeSpeciesId((enum Species)entry->species);
+        if (entry->originSlot != MpNet_GetLocalSlot()
+         && (entry->flags & MP_SL_FLAG_ACTIVE)
+         && MpSoulLink_IsSlotLinkedWithLocal(entry->originSlot, entry->linkGroup)
+         && partnerSpecies != SPECIES_NONE
+         && IsDirectSpeciesOrEvoMatch(partnerSpecies, sp))
+            return true;
     }
     return false;
 }
@@ -1698,6 +1728,61 @@ void MpSoulLink_ImportStateJson(const char *jsonPtr)
     {
         if (nextLinkNum > sNextLinkSeq && nextLinkNum < 0xFFFEu)
             sNextLinkSeq = (uint16_t)nextLinkNum;
+    }
+
+    sImportedPartnerSpeciesCount = 0;
+    valPtr = JsonFindKeyInObject(objStart, objClose + 1, "partnerSpecies");
+    if (valPtr != NULL && *valPtr == '[')
+    {
+        const char *arrClose = JsonFindMatchingClose(valPtr, objClose + 1, '[', ']');
+        if (arrClose != NULL)
+        {
+            const char *p = JsonSkipWs(valPtr + 1, arrClose);
+            while (p < arrClose && sImportedPartnerSpeciesCount < MP_SOUL_LINK_TABLE_CAP)
+            {
+                const char *entryClose;
+                uint32_t slotIndex = MP_MAX_PLAYERS;
+                uint32_t partnerSpecies = SPECIES_NONE;
+
+                p = JsonSkipWs(p, arrClose);
+                while (p < arrClose && *p == ',')
+                    p = JsonSkipWs(p + 1, arrClose);
+                if (p >= arrClose || *p == ']')
+                    break;
+                if (*p != '{')
+                {
+                    p = JsonSkipValue(p, arrClose);
+                    continue;
+                }
+                entryClose = JsonFindMatchingClose(p, arrClose, '{', '}');
+                if (entryClose == NULL)
+                    break;
+
+                JsonReadUint32(p, entryClose + 1, "slot", &slotIndex);
+                JsonReadUint32(p, entryClose + 1, "species", &partnerSpecies);
+                if (slotIndex < MP_MAX_PLAYERS && partnerSpecies > SPECIES_NONE && partnerSpecies < NUM_SPECIES)
+                {
+                    uint16_t i;
+                    bool duplicate = false;
+                    for (i = 0; i < sImportedPartnerSpeciesCount; i++)
+                    {
+                        if (sImportedPartnerSpeciesSlots[i] == slotIndex
+                         && sImportedPartnerSpecies[i] == partnerSpecies)
+                        {
+                            duplicate = true;
+                            break;
+                        }
+                    }
+                    if (!duplicate)
+                    {
+                        sImportedPartnerSpeciesSlots[sImportedPartnerSpeciesCount] = (uint8_t)slotIndex;
+                        sImportedPartnerSpecies[sImportedPartnerSpeciesCount] = (uint16_t)partnerSpecies;
+                        sImportedPartnerSpeciesCount++;
+                    }
+                }
+                p = entryClose + 1;
+            }
+        }
     }
 
     valPtr = JsonFindKeyInObject(objStart, objClose + 1, "routes");

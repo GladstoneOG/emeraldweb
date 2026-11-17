@@ -361,6 +361,10 @@
           Quick-Trade
         </button>
 
+        <button id="open-cheat-btn" class="em-btn danger" type="button" title="Host Cheat Menu" style="display:none;">
+          Host Cheats
+        </button>
+
         <button id="open-saves-btn" class="em-btn" type="button" title="Hybrid Campaign Run Save Manager">
           <svg class="em-icon"><use href="#icon-save-cart"></use></svg>
           Run Saves
@@ -789,6 +793,42 @@
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Host-only item and evolution tools -->
+  <div id="host-cheat-modal" class="em-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="host-cheat-modal-title">
+    <div class="em-modal narrow em-panel">
+      <div class="em-modal-header">
+        <span id="host-cheat-modal-title">HOST CHEAT MENU</span>
+        <button class="em-btn sm" type="button" data-close-modal="host-cheat-modal">✕ Close</button>
+      </div>
+      <div class="em-modal-body">
+        <div class="em-section-box">
+          <label for="cheat-target-select" class="gba-font" style="font-size:11px;font-weight:700;display:block;margin-bottom:4px;">PLAYER</label>
+          <select id="cheat-target-select" class="em-select" style="width:100%;"></select>
+        </div>
+
+        <div class="em-section-box">
+          <div class="em-section-title">Give an Item</div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <select id="cheat-item-select" class="em-select" style="flex:1;"></select>
+            <input id="cheat-item-qty" class="em-input" type="number" min="1" max="99" value="1" style="width:64px;" aria-label="Item quantity" />
+            <button id="cheat-give-item-btn" class="em-btn primary sm" type="button">Give</button>
+          </div>
+        </div>
+
+        <div class="em-section-box">
+          <div class="em-section-title">Trigger an Evolution</div>
+          <label for="cheat-mon-select" style="font-size:11px;font-weight:700;display:block;margin-bottom:4px;">POKÉMON</label>
+          <select id="cheat-mon-select" class="em-select" style="width:100%;margin-bottom:7px;"></select>
+          <label for="cheat-evo-item-select" style="font-size:11px;font-weight:700;display:block;margin-bottom:4px;">EVOLUTION CONDITION</label>
+          <select id="cheat-evo-item-select" class="em-select" style="width:100%;margin-bottom:7px;"></select>
+          <button id="cheat-evolve-btn" class="em-btn gold" type="button" style="width:100%;">Start Evolution</button>
+          <div style="font-size:10px;color:#55626d;margin-top:5px;">Choose a ready level or friendship evolution, or use a matching evolution item already in the player's bag.</div>
+        </div>
+        <div id="cheat-menu-note" style="font-size:11px;color:#55626d;"></div>
       </div>
     </div>
   </div>

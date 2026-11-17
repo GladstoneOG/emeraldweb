@@ -63,6 +63,7 @@
   })();
   let lastNonZeroVolume = audioVolume > 0 ? audioVolume : 80;
   let pendingTradeItems = []; // local draft items in trade modal
+  let hostCheatItemCatalog = [];
   let previewAnimStop = false;
   let lastGamepadMask = 0;
   let gamepadPollStarted = false;
@@ -256,6 +257,8 @@
       renderSavesModal();
     } else if (id === "trade-modal") {
       renderTradeModal();
+    } else if (id === "host-cheat-modal") {
+      renderHostCheatModal(PokemonNet.state);
     }
   }
 
@@ -452,6 +455,7 @@
     const disconnectBtn = $("disconnect-room-btn");
     const speedGroup = $("speed-control-group");
     const speedReadonly = $("speed-readonly-pill");
+    const cheatBtn = $("open-cheat-btn");
     const connectedCount = state.players.filter((p) => p.connected).length;
     const myIdx = (state.connection && state.connection.mySlotIndex) || 0;
     const me = state.players[myIdx];
@@ -470,6 +474,7 @@
       tradeBtn.disabled = Boolean(localGate);
       tradeBtn.title = localGate || "Anywhere Quick-Trade";
     }
+    if (cheatBtn) cheatBtn.style.display = PokemonNet.isHost() ? "inline-flex" : "none";
 
     if (badge) {
       const roomNum = Number(state.connection.roomPort) || 0;
@@ -610,20 +615,17 @@
 
             const peerGate = getUiFeatureGateReason(state, slotNum);
             const peerDisabledAttr = peerGate ? "disabled" : "";
-            const leaveDisabledAttr = gameOver ? "disabled" : "";
             const pairTitle = isPairedWithMe
-              ? gameOver
-                ? "Run is Game Over"
-                : "Leave 2v2 Party"
+              ? "Soul-Link parties are permanent once formed"
               : peerGate || "Pair for Co-op 2v2";
 
             const actionButtons = isMe
               ? myPlayer.partyId
-                ? `<button class="em-btn sm" type="button" data-action="leave-party" ${leaveDisabledAttr} title="${escapeHtml(gameOver ? "Run is Game Over" : "Leave Co-op Party")}">${svgIcon("icon-coop-shield")} ${escapeHtml(myPlayer.partyId)} ✕</button>`
+                ? `<button class="em-btn sm" type="button" disabled title="Soul-Link parties are permanent once formed">${svgIcon("icon-coop-shield")} Soul-Link Locked</button>`
                 : ""
               : `
-              <button class="em-btn sm ${isPairedWithMe ? "gold" : ""}" type="button" data-action="${isPairedWithMe ? "leave-party" : "pair-party"}" data-slot="${slotNum}" ${isPairedWithMe ? leaveDisabledAttr : peerDisabledAttr} title="${escapeHtml(pairTitle)}">
-                ${svgIcon("icon-coop-shield")} ${isPairedWithMe ? "Paired" : "Pair"}
+              <button class="em-btn sm ${isPairedWithMe ? "gold" : ""}" type="button" ${isPairedWithMe ? "disabled" : `data-action="pair-party" data-slot="${slotNum}" ${peerDisabledAttr}`} title="${escapeHtml(pairTitle)}">
+                ${svgIcon("icon-coop-shield")} ${isPairedWithMe ? "Paired · Locked" : "Pair"}
               </button>
               <button class="em-btn sm" type="button" data-action="teleport" data-slot="${slotNum}" ${peerDisabledAttr} title="${escapeHtml(peerGate || `Teleport to ${p.name} (${p.mapName})`)}">
                 ${svgIcon("icon-warp-pad")} Warp
@@ -1304,6 +1306,67 @@
     $("trade-partner-money-label").textContent = `¥${Number((tr.partnerOffer && tr.partnerOffer.money) || 0).toLocaleString()}`;
   }
 
+  function renderHostCheatModal(state) {
+    if (!PokemonNet.isHost()) return;
+    const myIdx = Number(state.connection.mySlotIndex) || 0;
+    const players = state.players.filter((p) => p && (p.connected || p.slotIndex === myIdx));
+    const targetSel = $("cheat-target-select");
+    const previousTarget = targetSel ? Number(targetSel.value) : myIdx;
+    if (targetSel) {
+      setHtmlIfChanged(
+        targetSel,
+        players.map((p) => `<option value="${Number(p.slotIndex)}">P${Number(p.slotIndex) + 1} ${escapeHtml(p.name)}${p.slotIndex === myIdx ? " (Host)" : ""}</option>`).join("")
+      );
+      targetSel.value = String(players.some((p) => p.slotIndex === previousTarget) ? previousTarget : myIdx);
+    }
+    const targetSlot = targetSel && targetSel.value !== "" ? Number(targetSel.value) : myIdx;
+    const target = state.players[targetSlot] || state.players[myIdx];
+    const party = (target && Array.isArray(target.party) ? target.party : []).filter((m) => m && m.species !== "Egg");
+    const monSel = $("cheat-mon-select");
+    const previousMon = monSel ? monSel.value : "0";
+    if (monSel) {
+      const monOptions = party.map((m, idx) =>
+        `<option value="${idx}">${escapeHtml(m.nickname || m.species || "Pokémon")} (${escapeHtml(m.species || "Unknown")}) Lv.${Number(m.level) || 1}</option>`
+      );
+      setHtmlIfChanged(monSel, monOptions.length ? monOptions.join("") : `<option value="">No Pokémon in this party</option>`);
+      if (party[Number(previousMon)]) monSel.value = previousMon;
+    }
+
+    if (!hostCheatItemCatalog.length) hostCheatItemCatalog = global.PokemonWasmBridge._getCheatItemCatalog();
+    const items = hostCheatItemCatalog;
+    const itemSel = $("cheat-item-select");
+    const previousItem = itemSel ? itemSel.value : "";
+    if (itemSel) {
+      setHtmlIfChanged(itemSel, items.map((item) => `<option value="${item.itemId}">${escapeHtml(item.name)}</option>`).join(""));
+      if (items.some((item) => String(item.itemId) === previousItem)) itemSel.value = previousItem;
+    }
+    const evoItemSel = $("cheat-evo-item-select");
+    if (evoItemSel) {
+      const evoItems = items.filter((item) => item.itemId >= 211 && item.itemId <= 237);
+      setHtmlIfChanged(
+        evoItemSel,
+          `<option value="0">Ready level evolution</option>` +
+          evoItems.map((item) => `<option value="${item.itemId}">${escapeHtml(item.name)} (in bag)</option>`).join("")
+      );
+    }
+
+    const offlineTarget = target && targetSlot !== myIdx && !target.connected;
+    const busyTarget = Boolean(target && (target.inBattle || target.busy));
+    setTextIfChanged(
+      $("cheat-menu-note"),
+      offlineTarget
+        ? "That player is offline and cannot receive a cheat action."
+        : busyTarget
+          ? "That player must return to the overworld before a cheat action can be applied."
+          : party.length === 0
+            ? "The selected player has no party Pokémon to evolve."
+            : ""
+    );
+    const disabled = !state.wasmReady || !target || offlineTarget || busyTarget;
+    $("cheat-give-item-btn").disabled = disabled || items.length === 0;
+    $("cheat-evolve-btn").disabled = disabled || party.length === 0;
+  }
+
   function showBusyBattlePrompt(payload) {
     const stack = $("toast-stack");
     if (!stack || !payload) return;
@@ -1608,6 +1671,7 @@
     renderCutsceneBanner(state);
     if ($("trade-modal").classList.contains("open")) renderTradeModal();
     if ($("saves-modal").classList.contains("open")) renderSavesModal();
+    if ($("host-cheat-modal").classList.contains("open")) renderHostCheatModal(state);
   }
 
   // --- Preset Sync Helpers for Room Creation ---
@@ -1992,6 +2056,38 @@
         return;
       }
       openModal("trade-modal");
+    });
+    $("open-cheat-btn").addEventListener("click", () => {
+      if (!PokemonNet.isHost()) return;
+      openModal("host-cheat-modal");
+    });
+    $("cheat-target-select").addEventListener("change", () => renderHostCheatModal(PokemonNet.state));
+    $("cheat-give-item-btn").addEventListener("click", () => {
+      const targetSlot = Number($("cheat-target-select").value);
+      const itemId = Number($("cheat-item-select").value);
+      const quantity = Math.max(1, Math.min(99, Number.parseInt($("cheat-item-qty").value, 10) || 1));
+      const target = PokemonNet.state.players[targetSlot];
+      const applied = PokemonNet.runHostCheatAction(targetSlot, 12, itemId, quantity);
+      if (applied) {
+        showToast("gold", "Host Cheat", `${quantity} × ${($("cheat-item-select").selectedOptions[0] || {}).textContent || "item"} sent to ${target ? target.name : "player"}.`);
+      } else {
+        showToast("warn", "Host Cheat", "Could not add that item. The bag may be full or the game may be busy.");
+      }
+      focusCanvas();
+    });
+    $("cheat-evolve-btn").addEventListener("click", () => {
+      const targetSlot = Number($("cheat-target-select").value);
+      const partyIndex = Number($("cheat-mon-select").value);
+      const itemId = Number($("cheat-evo-item-select").value) || 0;
+      const target = PokemonNet.state.players[targetSlot];
+      const mon = target && target.party ? target.party[partyIndex] : null;
+      const applied = mon && PokemonNet.runHostCheatAction(targetSlot, 11, partyIndex, itemId);
+      if (applied) {
+        showToast("gold", "Host Cheat", `Evolution started for ${mon.nickname || mon.species}.`);
+      } else {
+        showToast("warn", "Host Cheat", "That Pokémon is not ready for the selected evolution, or the required item is missing.");
+      }
+      focusCanvas();
     });
     $("open-saves-btn").addEventListener("click", () => {
       if ($("reset-new-game-confirm")) $("reset-new-game-confirm").style.display = "none";

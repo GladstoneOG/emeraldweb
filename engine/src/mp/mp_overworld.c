@@ -1,6 +1,7 @@
 #include "global.h"
 #include "event_data.h"
 #include "event_object_movement.h"
+#include "evolution_scene.h"
 #include "field_control_avatar.h"
 #include "field_effect.h"
 #include "field_effect_helpers.h"
@@ -2041,6 +2042,8 @@ WASM_KEEPALIVE int mp_test_query(int kind, int arg0, int arg1)
             return (int)GetMonData(&gParties[B_TRAINER_OPPONENT_A][arg1], MON_DATA_HP);
         default: return 0;
         }
+    case 11:
+        return ITEMS_COUNT;
     default:
         return 0;
     }
@@ -2344,7 +2347,56 @@ WASM_KEEPALIVE int mp_test_action(int kind, int arg0, int arg1, int arg2)
         MpSoulLink_TransferDeadPartyMonsToGraveyard();
         ForceReportStateNow();
         return 1;
+    case 11: {
+        u16 itemId = (u16)arg1;
+        enum EvolutionMode mode = (itemId == ITEM_NONE) ? EVO_MODE_NORMAL : EVO_MODE_ITEM_USE;
+        enum Species targetSpecies;
+        bool32 canStopEvo = TRUE;
+        struct Pokemon *mon;
+
+        if (gMain.inBattle || gMain.callback2 != CB2_Overworld
+         || arg0 < 0 || arg0 >= PARTY_SIZE
+         || itemId >= ITEMS_COUNT)
+            return 0;
+        mon = &gParties[B_TRAINER_PLAYER][arg0];
+        if (GetMonData(mon, MON_DATA_SPECIES) == SPECIES_NONE
+         || GetMonData(mon, MON_DATA_IS_EGG)
+         || MpSoulLink_IsMonDead(mon)
+         || (itemId != ITEM_NONE && !CheckBagHasItem((enum Item)itemId, 1)))
+            return 0;
+
+        targetSpecies = GetEvolutionTargetSpecies(mon, mode, (enum Item)itemId, NULL, &canStopEvo, CHECK_EVO);
+        if (targetSpecies == SPECIES_NONE)
+            return 0;
+
+        GetEvolutionTargetSpecies(mon, mode, (enum Item)itemId, NULL, &canStopEvo, DO_EVO);
+        gCB2_AfterEvolution = CB2_ReturnToField;
+        BeginEvolutionScene(mon, targetSpecies, canStopEvo, (u8)arg0);
+        return 1;
+    }
+    case 12: {
+        u16 itemId = (u16)arg0;
+        u16 quantity = (u16)((arg1 > 0) ? arg1 : 1);
+        if (gMain.inBattle || gMain.callback2 != CB2_Overworld
+         || itemId == ITEM_NONE || itemId >= ITEMS_COUNT || quantity > 99)
+            return 0;
+        if (!AddBagItem((enum Item)itemId, quantity))
+            return 0;
+        ForceReportStateNow();
+        return 1;
+    }
     default:
         return 0;
     }
+}
+
+WASM_KEEPALIVE int mp_get_item_name(int itemId, char *out, int outSize)
+{
+    if (out == NULL || outSize <= 0)
+        return 0;
+    out[0] = '\0';
+    if (itemId <= ITEM_NONE || itemId >= ITEMS_COUNT)
+        return 0;
+    ConvertGbaStringToAscii(GetItemName((enum Item)itemId), out, (size_t)outSize);
+    return out[0] != '\0';
 }
